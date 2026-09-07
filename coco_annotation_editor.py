@@ -26,9 +26,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--images",required=True, type=Path, help="Directory containing the dataset images",)
     return parser.parse_args()
+
 """ Data loading functions """
-def get_first_image(image_dir: Path) -> Image.Image:
-    """Load the first JPEG image in the dataset directory."""
+def get_image_files(image_dir: Path) -> list[Path]:
+    """Get all JPEG images in the dataset directory."""
 
     image_files = sorted(
         list(image_dir.glob("*.jpeg"))
@@ -40,7 +41,8 @@ def get_first_image(image_dir: Path) -> Image.Image:
             f"No JPEG images found in {image_dir}"
         )
 
-    return Image.open(image_files[0]).convert("RGB")
+    return image_files
+
 """ UI setup functions"""
 def create_header():
     """Create the application header."""
@@ -57,16 +59,6 @@ def create_dataset_panel():
 
     with gr.Column():
         gr.Markdown("### Dataset")
-
-        dataset_path = gr.Textbox(
-            label="Dataset directory",
-            placeholder="/path/to/dataset",
-        )
-
-        load_button = gr.Button(
-            "Load Dataset",
-            variant="primary"
-        )
 
         image_counter = gr.Markdown(
             "Image: 0 / 0"
@@ -89,8 +81,6 @@ def create_dataset_panel():
         )
 
         return {
-            "dataset_path": dataset_path,
-            "load_button": load_button,
             "image_counter": image_counter,
             "previous_button": previous_button,
             "next_button": next_button,
@@ -178,12 +168,25 @@ def create_app():
             f"Image directory does not exist: {image_dir}"
         )
 
-    first_image = get_first_image(image_dir)
+    image_files = get_image_files(image_dir)
+    def load_image(index: int):
+        image = Image.open(image_files[index]).convert("RGB")
+        return image
+      
+    """ Image cycling functions without wrap around to avoid confusion """
+    def next_image(index: int):
+        index = min(index + 1, len(image_files) - 1)
+        return load_image(index), index
+
+
+    def previous_image(index: int):
+        index = max(index - 1, 0)
+        return load_image(index), index
 
     with gr.Blocks(
         title="Building Dataset Cleaner"
     ) as app:
-
+        image_index = gr.State(0) 
         create_header()
 
         with gr.Row():
@@ -203,13 +206,16 @@ def create_app():
         gr.Markdown("---")
 
         create_status_bar()
-
-        # Load the first image
-        image_panel["image_display"].value = first_image
         app.load(
-            fn=lambda: get_first_image(image_dir),
+            fn=lambda: load_image(0),
             outputs=image_panel["image_display"],
         )
+        dataset_panel["next_button"].click(
+            fn=next_image, inputs=image_index,
+            outputs = [image_panel["image_display"],image_index])
+        dataset_panel["previous_button"].click(
+            fn=previous_image, inputs=image_index,
+            outputs = [image_panel["image_display"],image_index])
     app.launch()
 
 
