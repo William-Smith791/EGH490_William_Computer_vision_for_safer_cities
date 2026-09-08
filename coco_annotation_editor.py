@@ -16,6 +16,7 @@ import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+import inspect
 
 import gradio as gr
 from PIL import Image, ImageDraw, ImageFont
@@ -187,7 +188,7 @@ def create_app():
     (coco_images,annotations_by_image,categories) = load_coco_annotations(annotation_path)
     coco_by_filename = {str(image["file_name"]): image
                         for image in coco_images.values()}
-    def load_image(index: int):
+    def load_image(index: int, selected_annotation_id=None):
         image_path = image_files[index]
         image = Image.open(image_path).convert("RGB")
         image_record = coco_by_filename.get(image_path.name)
@@ -209,8 +210,11 @@ def create_app():
             if not bbox or len(bbox) < 4:
                 continue
             x, y, width, height = map(float,bbox[:4])
+            annotation_id = int(annotation["id"])
             category_id = int(annotation["category_id"])
             colour = colour_for_category(category_id)
+            if annotation_id == selected_annotation_id:
+                draw.rectangle((x, y, x + width, y + height),outline="white",width=7)
             draw.rectangle((x,y,x + width,y + height,),outline=colour,width=3)
             label = categories.get(category_id,f"Unknown ({category_id})")
             text_box = draw.textbbox((0, 0), label, font=font, stroke_width=1)
@@ -220,21 +224,63 @@ def create_app():
             draw.rectangle((x,y,x + text_width + 2 * padding,y + text_height + 2 * padding,),fill=colour)
             draw.text((x+padding, y+padding),label,fill="white", font=font, stroke_width=1, stroke_fill='black')
         return image
-      
+    
+    def select_annotation(index: int,click_x: float,click_y: float):
+        image_path = image_files[index]
+        image_record = coco_by_filename.get(image_path.name)
+        if image_record is None:
+            return (load_image(index),None,{})
+        image_id = int(image_record["id"])
+        annotations = annotations_by_image.get(image_id,[])
+        selected_annotation = None
+        # Reverse the list so that if boxes overlap,the annotation drawn last is selected first.
+        for annotation in reversed(annotations):
+            bbox = annotation.get("bbox")
+            if not bbox or len(bbox) < 4:
+                continue
+            x, y, width, height = map(float,bbox[:4])
+
+            if ( x <= click_x <= x + width and y <= click_y <= y + height):
+                selected_annotation = annotation
+                break
+        # Nothing selected
+        if selected_annotation is None:
+
+            return (load_image(index),None,{})
+        # Annotation selected
+        annotation_id = int(selected_annotation["id"])
+
+        category_id = int(
+            selected_annotation["category_id"]
+        )
+
+        bbox = selected_annotation.get(
+            "bbox",
+            []
+        )
+        annotation_info = {
+            "id": annotation_id,
+            "image_id": int(selected_annotation["image_id"]),
+            "category_id": category_id,
+            "category": categories.get(category_id,f"Unknown ({category_id})"),
+            "bbox": bbox,
+        }
+        return (load_image(index,annotation_id),annotation_id,annotation_info)
     """ Image cycling functions without wrap around to avoid confusion """
     def next_image(index: int):
         index = min(index + 1, len(image_files) - 1)
-        return load_image(index), index
+        return load_image(index), index, None, {}
 
 
     def previous_image(index: int):
         index = max(index - 1, 0)
-        return load_image(index), index
+        return load_image(index), index, None, {}
 
     with gr.Blocks(
         title="Building Dataset Cleaner"
     ) as app:
-        image_index = gr.State(0) 
+        image_index = gr.State(0)
+        selected_annotation_id = gr.State(None) 
         create_header()
 
         with gr.Row():
@@ -254,16 +300,24 @@ def create_app():
         gr.Markdown("---")
 
         create_status_bar()
-        app.load(
-            fn=lambda: load_image(0),
-            outputs=image_panel["image_display"],
-        )
+        def handle_image_click(index, evt: gr.SelectData):
+            return select_annotation(index,evt.index[0],evt.index[1])
+        app.load(fn=lambda: load_image(0),outputs=image_panel["image_display"])
+        image_panel["image_display"].select(
+            fn=handle_image_click,
+            inputs=[image_index],
+            outputs=[image_panel["image_display"],selected_annotation_id,annotation_panel["annotation_info"]])
+        
         dataset_panel["next_button"].click(
-            fn=next_image, inputs=image_index,
-            outputs = [image_panel["image_display"],image_index])
+            fn=next_image,
+            inputs=[image_index],
+            outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel["annotation_info"]]
+        )
         dataset_panel["previous_button"].click(
-            fn=previous_image, inputs=image_index,
-            outputs = [image_panel["image_display"],image_index])
+                    fn=previous_image,
+                    inputs=[image_index],
+                    outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel["annotation_info"]]
+                )
     app.launch()
 
 
