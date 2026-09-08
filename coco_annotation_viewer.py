@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-# python3 coco_annotation_viewer.py \
-#  --images data/NHRA_Dataset/val \
-# --annotations data/NHRA_Dataset/val_annotations.json \
-# --port 7870
+"""
+python3 coco_annotation_viewer.py \
+ --images data/NHRA_Dataset/val \
+--annotations data/NHRA_Dataset/val_annotations.json \
+--port 7870
+"""
 import argparse
 import colorsys
 import json
