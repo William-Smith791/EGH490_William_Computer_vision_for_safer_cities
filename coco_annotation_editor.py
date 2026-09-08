@@ -16,7 +16,10 @@ import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+import base64
+from io import BytesIO
 import inspect
+import html
 
 import gradio as gr
 from PIL import Image, ImageDraw, ImageFont
@@ -125,7 +128,80 @@ def create_image_panel():
     """Create the image display panel."""
     with gr.Column():
         gr.Markdown("### COCO Annotated Image")
-        image_display = gr.Image(show_label=False,type="pil",height=640)
+        image_display = gr.HTML(height=640,js_on_load="""
+    function setupDragging() {
+        const svg = element.querySelector("svg");
+        if (!svg) {
+            console.log("SVG NOT FOUND");
+            return;
+        }
+        console.log("SVG FOUND");
+        svg.addEventListener("mousedown", function(event) {
+            const group = event.target.closest(
+                ".annotation-group"
+            );
+            if (!group) {
+                return;
+            }
+            event.preventDefault();
+            let dragging = true;
+            const startMouse = svg.createSVGPoint();
+            startMouse.x = event.clientX;
+            startMouse.y = event.clientY;
+            const startPosition =
+                startMouse.matrixTransform(
+                    svg.getScreenCTM().inverse()
+                );
+            const startGroupX = 0;
+            const startGroupY = 0;
+            group.style.cursor = "grabbing";
+            function move(event) {
+                if (!dragging) {
+                    return;
+                }
+                const mouse = svg.createSVGPoint();
+                mouse.x = event.clientX;
+                mouse.y = event.clientY;
+                const position =
+                    mouse.matrixTransform(
+                        svg.getScreenCTM().inverse()
+                    );
+                const dx =
+                    position.x - startPosition.x;
+                const dy =
+                    position.y - startPosition.y;
+                group.setAttribute(
+                    "transform",
+                    `translate(${startGroupX + dx}, ${startGroupY + dy})`
+                );
+            }
+            function stop() {
+                dragging = false;
+                group.style.cursor = "move";
+                document.removeEventListener(
+                    "mousemove",
+                    move
+                );
+                document.removeEventListener(
+                    "mouseup",
+                    stop
+                );
+            }
+            document.addEventListener(
+                "mousemove",
+                move
+            );
+            document.addEventListener(
+                "mouseup",
+                stop
+            );
+        });
+    }
+    setupDragging();
+    watch("value", () => {
+        setupDragging();
+    });
+""")
         return {"image_display": image_display}
 
 
@@ -266,21 +342,94 @@ def create_app():
             "bbox": bbox,
         }
         return (load_image(index,annotation_id),annotation_id,annotation_info)
+
+    def render_interactive_image(index: int, selected_annotation_id=None, edited_annotations=None):
+        image_path = image_files[index]
+        image = Image.open(image_path).convert("RGB")
+        image_record = coco_by_filename.get(image_path.name)
+        if image_record is None:
+            return "<p>No COCO annotation found for this image.</p>"
+        image_id = int(image_record["id"])
+        annotations = annotations_by_image.get(image_id,[])
+        # Convert the PIL image into a base64 encoded JPEG
+        image_buffer = BytesIO()
+        image.save(image_buffer, format="JPEG")
+        image_data = base64.b64encode(image_buffer.getvalue()).decode("utf-8")
+        # Start the SVG
+        svg_parts = [f"""
+            <div style="width: 100%; overflow:auto;">
+            <svg
+            width="{image.width}" height="{image.height}" viewBox="0 0 {image.width} {image.height}"
+            >
+            <image
+            href="data:image/jpeg;base64,{image_data}" x="0" y="0" width="{image.width}" height="{image.height}"
+            />"""]
+        # Draw annotations
+        for annotation in annotations:
+            bbox = annotation.get("bbox")
+            if not bbox or len(bbox) < 4:
+                continue
+            x, y, width, height = map(float, bbox[:4])
+            annotation_id = int(annotation["id"])
+            category_id = int(annotation["category_id"])
+            red, green, blue = colour_for_category(category_id)
+            colour = f"rgb({red},{green},{blue})"
+            # Highlight selected annotation
+            label = categories.get(category_id,f"Unknown ({category_id})")
+            font_size = max(16,round(min(image.width, image.height) / 45))
+            padding = 3
+            label_width = len(label) * font_size * 0.6
+            label_height = font_size + 2 * padding
+            if annotation_id == selected_annotation_id:
+                svg_parts.append(f"""
+                <rect
+                x="{x}" y="{y}" width="{width}" height="{height}" fill="none" stroke="white" stroke-width="7"
+                />""")
+            # Normal annotation boundary
+            svg_parts.append(f""" 
+            <g
+                class="annotation-group"
+                data-annotation-id="{annotation_id}"
+                transform="translate(0, 0)"
+                style="cursor: move;"
+            >
+                <rect
+                class="annotation-box" data-annotation-id="{annotation_id}"
+                x="{x}" y="{y}" width="{width}" height="{height}" 
+                fill="transparent" stroke="{colour}" stroke-width="3"
+                />
+                <rect
+                    x="{x}" y="{y}" width="{label_width + 2 * padding}" height="{label_height}" fill="{colour}"
+                    style="pointer-events: none;"
+                />
+                <text
+                    x="{x + padding}" y="{y + font_size}" font-size="{font_size}px" font-family="Arial, sans-serif"
+                    font-weight="bold" fill="white" stroke="black" stroke-width="1" paint-order="stroke"
+                    style="pointer-events: none;"
+                >
+                {label}</text>
+            </g>""")
+            
+        # Close SVG
+        svg_parts.append("""</svg></div>""")
+        return "".join(svg_parts)
+    
     """ Image cycling functions without wrap around to avoid confusion """
     def next_image(index: int):
         index = min(index + 1, len(image_files) - 1)
-        return load_image(index), index, None, {}
+        return render_interactive_image(index), index, None, {}
 
 
     def previous_image(index: int):
         index = max(index - 1, 0)
-        return load_image(index), index, None, {}
+        return render_interactive_image(index), index, None, {}
 
     with gr.Blocks(
-        title="Building Dataset Cleaner"
+        title="Building Dataset Cleaner",
     ) as app:
         image_index = gr.State(0)
-        selected_annotation_id = gr.State(None) 
+        selected_annotation_id = gr.State(None)
+        edited_annotations = gr.State({}) 
         create_header()
 
         with gr.Row():
@@ -302,11 +451,11 @@ def create_app():
         create_status_bar()
         def handle_image_click(index, evt: gr.SelectData):
             return select_annotation(index,evt.index[0],evt.index[1])
-        app.load(fn=lambda: load_image(0),outputs=image_panel["image_display"])
-        image_panel["image_display"].select(
-            fn=handle_image_click,
-            inputs=[image_index],
-            outputs=[image_panel["image_display"],selected_annotation_id,annotation_panel["annotation_info"]])
+        app.load(fn=lambda: render_interactive_image(0),outputs=image_panel["image_display"])
+        # image_panel["image_display"].select(
+        #     fn=handle_image_click,
+        #     inputs=[image_index],
+        #     outputs=[image_panel["image_display"],selected_annotation_id,annotation_panel["annotation_info"]])
         
         dataset_panel["next_button"].click(
             fn=next_image,
