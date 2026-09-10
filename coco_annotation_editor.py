@@ -129,29 +129,138 @@ def create_image_panel():
     with gr.Column():
         gr.Markdown("### COCO Annotated Image")
         image_display = gr.HTML(height=640,js_on_load="""
+    element.addEventListener("click", function(event) {
+        const group = event.target.closest(".annotation-group");
+        if (!group) {
+            return;
+        }
+        const annotationId = group.getAttribute("data-annotation-id");
+        if (!annotationId) {
+            return;
+        }
+        trigger(
+            "annotation_select",
+            {
+                annotation_id: parseInt(annotationId)
+            }
+            );
+    });
     function setupDragging() {
         const svg = element.querySelector("svg");
+        console.log("SETTING UP SVG:",svg);
         if (!svg) {
             console.log("SVG NOT FOUND");
             return;
         }
         console.log("SVG FOUND");
         svg.addEventListener("mousedown", function(event) {
-            const group = event.target.closest(
-                ".annotation-group"
-            );
+            const group = event.target.closest(".annotation-group");
             if (!group) {
                 return;
             }
+            // RESIZING
+            if (event.target.classList.contains("resize-handle")) {
+                const handle = event.target;
+                // Determine which corner was grabbed
+                const isTL = handle.classList.contains("handle-tl");
+                const isTR = handle.classList.contains("handle-tr");
+                const isBL = handle.classList.contains("handle-bl");
+                const isBR = handle.classList.contains("handle-br");
+                if (!isTL &&!isTR &&!isBL &&!isBR) {
+                    return;
+                }
+                event.preventDefault();
+                let resizing = true;
+                const startMouse = svg.createSVGPoint();
+                startMouse.x = event.clientX;
+                startMouse.y = event.clientY;
+                const startPosition = startMouse.matrixTransform(svg.getScreenCTM().inverse());
+                const box = group.querySelector(".annotation-box");
+                const labelBackground = group.querySelector(".annotation-label-bg");
+                const labelText = group.querySelector(".annotation-label");
+                const startX = parseFloat(box.getAttribute("x"));
+                const startY = parseFloat(box.getAttribute("y"));
+                const startWidth = parseFloat(box.getAttribute("width"));
+                const startHeight = parseFloat(box.getAttribute("height"));
+                function resize(event) {
+                    if (!resizing) {
+                        return;
+                    }
+                    const mouse = svg.createSVGPoint();
+                    mouse.x = event.clientX;
+                    mouse.y = event.clientY;
+                    const position = mouse.matrixTransform(svg.getScreenCTM().inverse());
+                    const dx = position.x -startPosition.x;
+                    const dy = position.y -startPosition.y;
+                    let newX = startX;
+                    let newY = startY;
+                    let newWidth = startWidth;
+                    let newHeight = startHeight;
+                    // TOP-LEFT
+                    if (isTL) {
+                        newX = Math.min(startX + dx,startX + startWidth - 10);
+                        newY = Math.min(startY + dy,startY + startHeight - 10);
+                        newWidth = startWidth -(newX - startX);
+                        newHeight = startHeight -(newY - startY);
+                    }
+                    // TOP-RIGHT
+                    if (isTR) {
+                        newY = Math.min(startY + dy,startY + startHeight - 10);
+                        newWidth = Math.max(10,startWidth + dx);
+                        newHeight = startHeight -(newY - startY);
+                    }
+                    // BOTTOM-LEFT
+                    if (isBL) {
+                        newX = Math.min(startX + dx,startX + startWidth - 10 );
+                        newWidth = startWidth -(newX - startX);
+                        newHeight = Math.max(10,startHeight + dy);
+                    }
+                    // BOTTOM-RIGHT
+                    if (isBR) {
+                        newWidth = Math.max(10,startWidth + dx);
+                        newHeight = Math.max(10,startHeight + dy);
+                    }
+                    // Update bounding box
+                    box.setAttribute("x",newX);
+                    box.setAttribute( "y",newY);
+                    box.setAttribute("width",newWidth);
+                    box.setAttribute("height",newHeight);
+                    // Move label with top-left corner
+                    labelBackground.setAttribute("x",newX);
+                    labelBackground.setAttribute("y",newY);
+                    labelText.setAttribute("x",newX + 3);
+                    labelText.setAttribute("y",newY + parseFloat(labelText.getAttribute("font-size")));
+                    // Get all handles
+                    const handleTL = group.querySelector(".handle-tl");
+                    const handleTR = group.querySelector(".handle-tr");
+                    const handleBL = group.querySelector(".handle-bl");
+                    const handleBR = group.querySelector(".handle-br");
+                    // Update handle positions
+                    handleTL.setAttribute("x",newX - 6);
+                    handleTL.setAttribute( "y",newY - 6);
+                    handleTR.setAttribute("x",newX + newWidth - 6);
+                    handleTR.setAttribute("y",newY - 6);
+                    handleBL.setAttribute("x", newX - 6);
+                    handleBL.setAttribute( "y",newY + newHeight - 6);
+                    handleBR.setAttribute("x",newX + newWidth - 6);
+                    handleBR.setAttribute( "y",newY + newHeight - 6);
+                }
+                function stopResize() {
+                    resizing = false;
+                    document.removeEventListener("mousemove",resize);
+                    document.removeEventListener("mouseup",stopResize);
+                }
+                document.addEventListener("mousemove",resize);
+                document.addEventListener( "mouseup",stopResize);
+                return;
+            }
+            // dragging code
             event.preventDefault();
             let dragging = true;
             const startMouse = svg.createSVGPoint();
             startMouse.x = event.clientX;
             startMouse.y = event.clientY;
-            const startPosition =
-                startMouse.matrixTransform(
-                    svg.getScreenCTM().inverse()
-                );
+            const startPosition = startMouse.matrixTransform(svg.getScreenCTM().inverse());
             const startGroupX = 0;
             const startGroupY = 0;
             group.style.cursor = "grabbing";
@@ -162,39 +271,19 @@ def create_image_panel():
                 const mouse = svg.createSVGPoint();
                 mouse.x = event.clientX;
                 mouse.y = event.clientY;
-                const position =
-                    mouse.matrixTransform(
-                        svg.getScreenCTM().inverse()
-                    );
-                const dx =
-                    position.x - startPosition.x;
-                const dy =
-                    position.y - startPosition.y;
-                group.setAttribute(
-                    "transform",
-                    `translate(${startGroupX + dx}, ${startGroupY + dy})`
-                );
+                const position = mouse.matrixTransform(svg.getScreenCTM().inverse());
+                const dx = position.x -startPosition.x;
+                const dy = position.y -startPosition.y;
+                group.setAttribute("transform",`translate(${startGroupX + dx}, ${startGroupY + dy})`);
             }
             function stop() {
                 dragging = false;
                 group.style.cursor = "move";
-                document.removeEventListener(
-                    "mousemove",
-                    move
-                );
-                document.removeEventListener(
-                    "mouseup",
-                    stop
-                );
+                document.removeEventListener("mousemove",move);
+                document.removeEventListener("mouseup",stop);
             }
-            document.addEventListener(
-                "mousemove",
-                move
-            );
-            document.addEventListener(
-                "mouseup",
-                stop
-            );
+            document.addEventListener("mousemove",move);
+            document.addEventListener("mouseup",stop);
         });
     }
     setupDragging();
@@ -300,48 +389,6 @@ def create_app():
             draw.rectangle((x,y,x + text_width + 2 * padding,y + text_height + 2 * padding,),fill=colour)
             draw.text((x+padding, y+padding),label,fill="white", font=font, stroke_width=1, stroke_fill='black')
         return image
-    
-    def select_annotation(index: int,click_x: float,click_y: float):
-        image_path = image_files[index]
-        image_record = coco_by_filename.get(image_path.name)
-        if image_record is None:
-            return (load_image(index),None,{})
-        image_id = int(image_record["id"])
-        annotations = annotations_by_image.get(image_id,[])
-        selected_annotation = None
-        # Reverse the list so that if boxes overlap,the annotation drawn last is selected first.
-        for annotation in reversed(annotations):
-            bbox = annotation.get("bbox")
-            if not bbox or len(bbox) < 4:
-                continue
-            x, y, width, height = map(float,bbox[:4])
-
-            if ( x <= click_x <= x + width and y <= click_y <= y + height):
-                selected_annotation = annotation
-                break
-        # Nothing selected
-        if selected_annotation is None:
-
-            return (load_image(index),None,{})
-        # Annotation selected
-        annotation_id = int(selected_annotation["id"])
-
-        category_id = int(
-            selected_annotation["category_id"]
-        )
-
-        bbox = selected_annotation.get(
-            "bbox",
-            []
-        )
-        annotation_info = {
-            "id": annotation_id,
-            "image_id": int(selected_annotation["image_id"]),
-            "category_id": category_id,
-            "category": categories.get(category_id,f"Unknown ({category_id})"),
-            "bbox": bbox,
-        }
-        return (load_image(index,annotation_id),annotation_id,annotation_info)
 
     def render_interactive_image(index: int, selected_annotation_id=None, edited_annotations=None):
         image_path = image_files[index]
@@ -380,13 +427,8 @@ def create_app():
             padding = 3
             label_width = len(label) * font_size * 0.6
             label_height = font_size + 2 * padding
-            if annotation_id == selected_annotation_id:
-                svg_parts.append(f"""
-                <rect
-                x="{x}" y="{y}" width="{width}" height="{height}" fill="none" stroke="white" stroke-width="7"
-                />""")
             # Normal annotation boundary
-            svg_parts.append(f""" 
+            annotation_svg = f""" 
             <g
                 class="annotation-group"
                 data-annotation-id="{annotation_id}"
@@ -394,25 +436,100 @@ def create_app():
                 style="cursor: move;"
             >
                 <rect
-                class="annotation-box" data-annotation-id="{annotation_id}"
+                class="annotation-box"
                 x="{x}" y="{y}" width="{width}" height="{height}" 
                 fill="transparent" stroke="{colour}" stroke-width="3"
                 />
                 <rect
+                    class="annotation-label-bg"
                     x="{x}" y="{y}" width="{label_width + 2 * padding}" height="{label_height}" fill="{colour}"
                     style="pointer-events: none;"
                 />
                 <text
+                    class="annotation-label"
                     x="{x + padding}" y="{y + font_size}" font-size="{font_size}px" font-family="Arial, sans-serif"
                     font-weight="bold" fill="white" stroke="black" stroke-width="1" paint-order="stroke"
                     style="pointer-events: none;"
                 >
                 {label}</text>
-            </g>""")
-            
+                """
+            if annotation_id == selected_annotation_id:
+                annotation_svg += f"""
+                <!-- Resize handles -->
+                    <rect
+                        class="resize-handle handle-tl"
+                        x="{x - 6}"
+                        y="{y - 6}"
+                        width="12"
+                        height="12"
+                        fill="white"
+                        stroke="black"
+                        stroke-width="2"
+                        style="cursor: nwse-resize;"
+                    />
+                    <rect
+                        class="resize-handle handle-tr"
+                        x="{x + width - 6}"
+                        y="{y - 6}"
+                        width="12"
+                        height="12"
+                        fill="white"
+                        stroke="black"
+                        stroke-width="2"
+                        style="cursor: nesw-resize;"
+                    />
+                    <rect
+                        class="resize-handle handle-bl"
+                        x="{x - 6}"
+                        y="{y + height - 6}"
+                        width="12"
+                        height="12"
+                        fill="white"
+                        stroke="black"
+                        stroke-width="2"
+                        style="cursor: nesw-resize;"
+                    />
+                    <rect
+                        class="resize-handle handle-br"
+                        x="{x + width - 6}"
+                        y="{y + height - 6}"
+                        width="12"
+                        height="12"
+                        fill="white"
+                        stroke="black"
+                        stroke-width="2"
+                        style="cursor: nwse-resize;"
+                        />"""
+            annotation_svg+= f"""</g>"""
+            svg_parts.append(annotation_svg)
         # Close SVG
         svg_parts.append("""</svg></div>""")
         return "".join(svg_parts)
+    def select_svg_annotation(index: int, evt: gr.EventData):
+        annotation_id = evt.annotation_id
+        if annotation_id is None:
+            return (render_interactive_image(index),None,{})
+        image_path = image_files[index]
+        image_record = coco_by_filename.get(image_path.name)
+
+        if image_record is None:
+            return (render_interactive_image(index),None,{})
+        image_id = int(image_record["id"])
+        annotations = annotations_by_image.get(image_id, [])
+        selected_annotation = None
+        for annotation in annotations:
+            if int(annotation["id"]) == int(annotation_id):
+                selected_annotation = annotation
+                break
+        if selected_annotation is None:
+            return (render_interactive_image(index),None,{})
+        category_id = int(selected_annotation["category_id"])
+        annotation_info = {
+            "id": int(selected_annotation["id"]),
+            "image_id": int(selected_annotation["image_id"]),
+            "category_id": category_id,
+            "category": categories.get(category_id,f"Unknown ({category_id})"),"bbox": selected_annotation.get("bbox", [])}
+        return (render_interactive_image(index, int(annotation_id)),int(annotation_id),annotation_info)
     
     """ Image cycling functions without wrap around to avoid confusion """
     def next_image(index: int):
@@ -449,14 +566,11 @@ def create_app():
         gr.Markdown("---")
 
         create_status_bar()
-        def handle_image_click(index, evt: gr.SelectData):
-            return select_annotation(index,evt.index[0],evt.index[1])
+        image_panel["image_display"].annotation_select(
+            fn=select_svg_annotation,
+            inputs=[image_index],
+            outputs=[image_panel["image_display"],selected_annotation_id,annotation_panel["annotation_info"]])
         app.load(fn=lambda: render_interactive_image(0),outputs=image_panel["image_display"])
-        # image_panel["image_display"].select(
-        #     fn=handle_image_click,
-        #     inputs=[image_index],
-        #     outputs=[image_panel["image_display"],selected_annotation_id,annotation_panel["annotation_info"]])
-        
         dataset_panel["next_button"].click(
             fn=next_image,
             inputs=[image_index],
