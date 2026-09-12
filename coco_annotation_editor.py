@@ -312,28 +312,17 @@ def create_annotation_panel():
     with gr.Column():
         gr.Markdown("### Annotation Actions")
         with gr.Row():
-            accept_button = gr.Button(
-                "✓ Accept",
-                variant="primary"
-            )
-            reject_button = gr.Button(
-                "✗ Reject",
-                variant="stop"
-            )
+            accept_button = gr.Button("✓ Accept",variant="primary")
+            reject_button = gr.Button("✗ Reject",variant="stop")
         with gr.Row():
-            delete_button = gr.Button(
-                "Delete Annotation"
-            )
-            reset_button = gr.Button(
-                "Reset Changes"
-            )
-        annotation_info = gr.JSON(
-            label="Current Annotation",
-            value={}
-        )
+            Add_button = gr.Button("Add Annotation")
+            delete_button = gr.Button("Delete Annotation")
+            reset_button = gr.Button("Reset Changes")
+        annotation_info = gr.JSON(label="Current Annotation",value={})
         return {
             "accept_button": accept_button,
             "reject_button": reject_button,
+            "Add_button": Add_button,
             "delete_button": delete_button,
             "reset_button": reset_button,
             "annotation_info": annotation_info,
@@ -390,7 +379,9 @@ def create_app():
             />"""]
         # Draw annotations
         for annotation in annotations:
-            annotation = get_current_annotation(annotation,edited_annotations or {})
+            (annotation, is_deleted) = get_current_annotation(annotation,edited_annotations or {})
+            if is_deleted:
+                continue
             bbox = annotation.get("bbox")
             if not bbox or len(bbox) < 4:
                 continue
@@ -486,12 +477,11 @@ def create_app():
     def select_svg_annotation(index: int, edited_annotations: dict, evt: gr.EventData):
         annotation_id = evt.annotation_id
         if annotation_id is None:
-            return (render_interactive_image(index, edited_annotations=edited_annotations),None,{})
+            raise ValueError(f"parsed annotation ID is of None type: expected integer")
         image_path = image_files[index]
         image_record = coco_by_filename.get(image_path.name)
-
         if image_record is None:
-            return (render_interactive_image(index,edited_annotations=edited_annotations),None,{})
+            raise ValueError(f"parsed image path of type None: expected String")
         image_id = int(image_record["id"])
         annotations = annotations_by_image.get(image_id, [])
         selected_annotation = None
@@ -500,7 +490,7 @@ def create_app():
                 selected_annotation = annotation
                 break
         if selected_annotation is None:
-            return (render_interactive_image(index,edited_annotations=edited_annotations),None,{})
+            return (render_interactive_image(index,None,edited_annotations),None,{})
         category_id = int(selected_annotation["category_id"])
         annotation_info = {
             "id": int(selected_annotation["id"]),
@@ -508,6 +498,27 @@ def create_app():
             "category_id": category_id,
             "category": categories.get(category_id,f"Unknown ({category_id})"),"bbox": selected_annotation.get("bbox", [])}
         return (render_interactive_image(index, int(annotation_id), edited_annotations),int(annotation_id),annotation_info)
+    def get_current_annotation(annotation,edited_annotations):
+                annotation_id = int(annotation["id"])
+                if annotation_id in edited_annotations:
+                    edited = annotation.copy()
+                    edited['bbox'] = edited_annotations[annotation_id]['bbox']
+                    is_deleted = edited_annotations[annotation_id]['deleted']
+                    return edited, is_deleted
+                return annotation, False
+    def update_edited_annotation(index: int,edited_annotations: dict, evt: gr.EventData):
+        annotation_id = int(evt._data['annotation_id'])
+        new_bbox = [float(value) for value in evt._data['bbox']]
+        if annotation_id not in edited_annotations:
+            edited_annotations.update({annotation_id:{'bbox':new_bbox, 'deleted': False}})
+        else:
+            edited_annotations.update({annotation_id:{'bbox':new_bbox, 'deleted':edited_annotations[annotation_id]['deleted']}})
+            print(edited_annotations)
+        return (render_interactive_image(index,annotation_id,edited_annotations), edited_annotations)
+    def delete_annotation(index: int, selected_annotation_id: int, edited_annotation: dict):
+        if selected_annotation_id is not None:
+            edited_annotation.update({selected_annotation_id:{'bbox': edited_annotation[selected_annotation_id]['bbox'],'deleted': True}})
+        return (render_interactive_image(index,selected_annotation_id,edited_annotation),edited_annotation)
     
     """ Image cycling functions without wrap around to avoid confusion """
     def next_image(index: int, edited_annotations: dict):
@@ -525,19 +536,6 @@ def create_app():
         image_index = gr.State(0)
         selected_annotation_id = gr.State(None)
         edited_annotations = gr.State({})
-        def get_current_annotation(annotation,edited_annotations):
-            annotation_id = int(annotation["id"])
-            if annotation_id in edited_annotations:
-                edited = annotation.copy()
-                edited['bbox'] = edited_annotations[annotation_id]['bbox']
-                return edited
-            return annotation
-        def update_edited_annotation(index: int,edited_annotations: dict, evt: gr.EventData):
-            annotation_id = int(evt._data['annotation_id'])
-            bbox = [float(value) for value in evt._data['bbox']]
-            updated_annotations = dict(edited_annotations or {})
-            updated_annotations[annotation_id] = {"bbox": bbox}
-            return (render_interactive_image(index,annotation_id,updated_annotations), updated_annotations)
         create_header()
 
         with gr.Row():
@@ -569,6 +567,10 @@ def create_app():
                     fn=update_edited_annotation,
                     inputs=[image_index, edited_annotations],
                     outputs=[image_panel["image_display"],edited_annotations])
+        annotation_panel["delete_button"].click(
+            fn=delete_annotation,
+            inputs=[image_index,selected_annotation_id, edited_annotations],
+            outputs=[image_panel["image_display"], edited_annotations])
         app.load(fn=lambda: render_interactive_image(0),outputs=image_panel["image_display"])
         dataset_panel["next_button"].click(
             fn=next_image,
