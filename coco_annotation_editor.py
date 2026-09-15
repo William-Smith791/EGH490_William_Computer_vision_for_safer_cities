@@ -368,7 +368,7 @@ def create_image_panel():
         return {"image_display": image_display}
 
 
-def create_annotation_panel():
+def create_annotation_panel(categories):
     """Create the annotation editing panel."""
     with gr.Column():
         gr.Markdown("### Annotation Actions")
@@ -378,13 +378,14 @@ def create_annotation_panel():
             Add_annotation = gr.Button("Add Annotation")
             delete_button = gr.Button("Delete Annotation")
             reset_button = gr.Button("Reset Changes")
-        annotation_info = gr.JSON(label="Current Annotation",value={})
+        # annotation_info = gr.JSON(label="Current Annotation",value={})
+        label_dropdown = gr.Dropdown(choices=list(categories.values()),label="Annotation Label",interactive=True)
         return {
             "apply_button": apply_button,
             "Add_annotation": Add_annotation,
             "delete_button": delete_button,
             "reset_button": reset_button,
-            "annotation_info": annotation_info,
+            "label_dropdown":label_dropdown
         }
 
 
@@ -395,12 +396,10 @@ def create_status_bar():
     )
     return status
 
-
+"""Construct the complete Gradio application."""
 def create_app():
-    """Construct the complete Gradio application."""
-
+    """Load image and annotation data."""
     args = parse_args()
-
     image_dir = args.images.expanduser().resolve()
     annotation_path = args.annotations.expanduser().resolve()
     if not image_dir.is_dir():
@@ -601,20 +600,21 @@ def create_app():
                 selected_annotation = annotation
                 break
         if selected_annotation is None:
-            return (render_interactive_image(index,None,edited_annotations),None,{})
+            return (render_interactive_image(index,None,edited_annotations),None,None)
         category_id = int(selected_annotation["category_id"])
         annotation_info = {
             "id": int(selected_annotation["id"]),
             "image_id": int(selected_annotation["image_id"]),
             "category_id": category_id,
             "category": categories.get(category_id,f"Unknown ({category_id})"),"bbox": selected_annotation.get("bbox", [])}
-        return (render_interactive_image(index, int(annotation_id), edited_annotations),int(annotation_id),annotation_info)
+        return (render_interactive_image(index, int(annotation_id), edited_annotations),int(annotation_id),
+                categories.get(category_id,f"Unknown ({category_id})"))
     
     def get_current_annotation(annotation,edited_annotations):
                 annotation_id = int(annotation["id"])
                 if annotation_id in edited_annotations:
                     edited = annotation.copy()
-                    edited['bbox'] = edited_annotations[annotation_id]['bbox']
+                    edited.update(edited_annotations[annotation_id])
                     is_deleted = edited_annotations[annotation_id]['deleted']
                     return edited, is_deleted
                 return annotation, False
@@ -639,7 +639,6 @@ def create_app():
                                                       "new":edited_annotations[annotation_id]['new'],
                                                       "image_id":image_id, "category_id":edited_annotations[annotation_id]['category_id'],
                                                       "area":area, "is_crowd":0,"segmentation":[]}})
-        print(edited_annotations)
         return (render_interactive_image(index,annotation_id,edited_annotations), edited_annotations)
     
     def delete_annotation(index: int, selected_annotation_id: int, edited_annotation: dict):
@@ -667,6 +666,20 @@ def create_app():
                                                  'category_id':1, 'image_id':image_id,
                                                  "area":area,"is_crowd":0,"segmentation":[]}
         return(render_interactive_image(index,new_annotation_id,edited_annotations,False), edited_annotations,False)
+
+    def update_annotation_label(index: int,annotation_id: int,edited_annotations: dict,label: str):
+        if annotation_id is None or label is None:
+            return (edited_annotations or {},render_interactive_image(index,annotation_id,edited_annotations or {}))
+        # Find the category ID corresponding to the selected label
+        category_id = None
+        for cat_id, category_name in categories.items():
+            if category_name == label:
+                category_id = int(cat_id)
+                break
+        if category_id is None:
+            raise ValueError(f"Unknown annotation label: {label}")
+        edited_annotations[annotation_id]["category_id"] = category_id
+        return (edited_annotations,render_interactive_image(index,int(annotation_id),edited_annotations))
     
     def enable_add_mode() -> bool:
         return(True)
@@ -674,12 +687,12 @@ def create_app():
     """ Image cycling functions without wrap around to avoid confusion """
     def next_image(index: int, edited_annotations: dict):
         index = min(index + 1, len(image_files) - 1)
-        return render_interactive_image(index, edited_annotations=edited_annotations), index, None, {}
-
+        return render_interactive_image(index, edited_annotations=edited_annotations), index, None, None
 
     def previous_image(index: int, edited_annotations: dict):
         index = max(index - 1, 0)
-        return render_interactive_image(index, edited_annotations=edited_annotations), index, None, {}
+        return render_interactive_image(index, edited_annotations=edited_annotations), index, None, None
+    
     """App building and button handling"""
     with gr.Blocks(
         title="Building Dataset Cleaner",
@@ -699,14 +712,14 @@ def create_app():
                 image_panel = create_image_panel()
             # Right annotation panel
             with gr.Column(scale=1, min_width=150):
-                annotation_panel = create_annotation_panel()
+                annotation_panel = create_annotation_panel(categories)
         gr.Markdown("---")
         create_status_bar()
         """Event control and button interactions"""
         image_panel["image_display"].annotation_select(
             fn=select_svg_annotation,
             inputs=[image_index, edited_annotations],
-            outputs=[image_panel["image_display"],selected_annotation_id,annotation_panel["annotation_info"]])
+            outputs=[image_panel["image_display"],selected_annotation_id,annotation_panel['label_dropdown']])
         
         image_panel["image_display"].annotation_edit(
             fn=update_edited_annotation,
@@ -744,13 +757,17 @@ def create_app():
         dataset_panel["next_button"].click(
             fn=next_image,
             inputs=[image_index, edited_annotations],
-            outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel["annotation_info"]]
+            outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel['label_dropdown']]
         )
         dataset_panel["previous_button"].click(
                     fn=previous_image,
                     inputs=[image_index, edited_annotations],
-                    outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel["annotation_info"]]
+                    outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel['label_dropdown']]
                 )
+        annotation_panel["label_dropdown"].change(
+    fn=update_annotation_label,
+    inputs=[image_index,selected_annotation_id,edited_annotations,annotation_panel["label_dropdown"]],
+    outputs=[edited_annotations,image_panel["image_display"]])
     app.launch()
 
 
