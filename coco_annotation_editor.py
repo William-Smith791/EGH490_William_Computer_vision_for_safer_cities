@@ -8,6 +8,10 @@ python3 coco_annotation_editor.py \
 --annotations data/NHRA_Dataset/val_annotations.json \
 --port 7870
 
+testing command
+python3 coco_annotation_editor.py \
+--images data/NHRA_Dataset/val \
+--annotations data/NHRA_Dataset/val_annotations_test.json
 Once executed copy and past URL into web browser to access UI
 """
 import argparse
@@ -23,7 +27,7 @@ import html
 
 import gradio as gr
 from PIL import Image, ImageDraw, ImageFont
-
+""" Miscellaneous functions"""
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Building Dataset Cleaner"
@@ -84,7 +88,6 @@ def load_coco_annotations(annotation_path: Path) -> tuple[dict[int,dict[str,Any]
         for category in coco.get("categories", [])
     }
     return images, annotations_by_image, categories
-
 """ UI setup functions"""
 def create_header():
     """Create the application header."""
@@ -128,7 +131,7 @@ def create_image_panel():
     """Create the image display panel."""
     with gr.Column():
         gr.Markdown("### COCO Annotated Image")
-        image_display = gr.HTML(height=640,js_on_load="""
+        image_display = gr.HTML(height=640,elem_id="interactive-image",js_on_load="""
     element.addEventListener("click", function(event) {
         const group = event.target.closest(".annotation-group");
         if (!group) {
@@ -144,12 +147,70 @@ def create_image_panel():
     function setupDragging() {
         const svg = element.querySelector("svg");
         console.log("SETTING UP SVG:",svg);
+        let drawStart = null;
+        let previewBox = null;
         if (!svg) {
             console.log("SVG NOT FOUND");
             return;
         }
         console.log("SVG FOUND");
         svg.addEventListener("mousedown", function(event) {
+            if (svg.getAttribute("data-add-mode") === "true")
+            {
+                event.preventDefault();
+                const point = svg.createSVGPoint();
+                point.x = event.clientX;
+                point.y = event.clientY;
+                const start = point.matrixTransform(svg.getScreenCTM().inverse());
+                drawing = true;
+                drawStart = start;
+                previewBox = document.createElementNS("http://www.w3.org/2000/svg","rect");
+                previewBox.setAttribute("class","annotation-preview");
+                previewBox.setAttribute("x",start.x);
+                previewBox.setAttribute("y",start.y);
+                previewBox.setAttribute("width",0);
+                previewBox.setAttribute("height",0);
+                previewBox.setAttribute("fill","transparent");
+                previewBox.setAttribute("stroke","white");
+                previewBox.setAttribute("stroke-width",3);
+                previewBox.setAttribute("stroke-dasharray","8 4");
+                svg.appendChild(previewBox);
+                function draw(event) {
+                    if (!drawing) {
+                        return;
+                    }
+                    const point = svg.createSVGPoint();
+                    point.x = event.clientX;
+                    point.y = event.clientY;
+                    const position =point.matrixTransform(svg.getScreenCTM().inverse());
+                    const x =Math.min(drawStart.x,position.x);
+                    const y =Math.min(drawStart.y,position.y);
+                    const width =Math.abs(position.x -drawStart.x);
+                    const height =Math.abs(position.y -drawStart.y);
+                    previewBox.setAttribute("x", x);
+                    previewBox.setAttribute("y", y);
+                    previewBox.setAttribute("width", width);
+                    previewBox.setAttribute("height", height);
+                }
+                function stopDraw(event) {
+                    if (!drawing) {
+                        return;
+                    }
+                    drawing = false;
+                    document.removeEventListener("mousemove",draw);
+                    document.removeEventListener("mouseup",stopDraw);
+                    const finalX = parseFloat(previewBox.getAttribute("x"));
+                    const finalY = parseFloat(previewBox.getAttribute("y"));
+                    const finalWidth = parseFloat(previewBox.getAttribute("width"));
+                    const finalHeight = parseFloat(previewBox.getAttribute("height"));
+                    trigger("annotation_add", {bbox: [finalX,finalY,finalWidth,finalHeight]});
+                }
+
+                document.addEventListener("mousemove",draw);
+
+                document.addEventListener("mouseup",stopDraw);
+                return;
+            }
             const group = event.target.closest(".annotation-group");
             if (!group) {
                 return;
@@ -312,17 +373,15 @@ def create_annotation_panel():
     with gr.Column():
         gr.Markdown("### Annotation Actions")
         with gr.Row():
-            accept_button = gr.Button("✓ Accept",variant="primary")
-            reject_button = gr.Button("✗ Reject",variant="stop")
+            apply_button = gr.Button("✓ Apply",variant="primary")
         with gr.Row():
-            Add_button = gr.Button("Add Annotation")
+            Add_annotation = gr.Button("Add Annotation")
             delete_button = gr.Button("Delete Annotation")
             reset_button = gr.Button("Reset Changes")
         annotation_info = gr.JSON(label="Current Annotation",value={})
         return {
-            "accept_button": accept_button,
-            "reject_button": reject_button,
-            "Add_button": Add_button,
+            "apply_button": apply_button,
+            "Add_annotation": Add_annotation,
             "delete_button": delete_button,
             "reset_button": reset_button,
             "annotation_info": annotation_info,
@@ -355,8 +414,8 @@ def create_app():
     (coco_images,annotations_by_image,categories) = load_coco_annotations(annotation_path)
     coco_by_filename = {str(image["file_name"]): image
                         for image in coco_images.values()}
-
-    def render_interactive_image(index: int, selected_annotation_id=None, edited_annotations=None):
+    """ Rendering function"""
+    def render_interactive_image(index: int, selected_annotation_id=None, edited_annotations=None, add_mode=False):
         image_path = image_files[index]
         image = Image.open(image_path).convert("RGB")
         image_record = coco_by_filename.get(image_path.name)
@@ -372,13 +431,19 @@ def create_app():
         svg_parts = [f"""
             <div style="width: 100%; overflow:auto;">
             <svg
-            width="{image.width}" height="{image.height}" viewBox="0 0 {image.width} {image.height}"
+            width="{image.width}" height="{image.height}" viewBox="0 0 {image.width} {image.height}" data-add-mode="{str(add_mode).lower()}"
             >
             <image
             href="data:image/jpeg;base64,{image_data}" x="0" y="0" width="{image.width}" height="{image.height}"
             />"""]
         # Draw annotations
-        for annotation in annotations:
+        all_annotations = list(annotations)
+        # Add locally created annotations
+        for annotation_id, edited in (edited_annotations or {}).items():
+            if edited['new'] and edited['image_id'] == image_id:
+                all_annotations.append({"id": annotation_id,"image_id": edited['image_id'],
+                                        "category_id": edited["category_id"],"bbox": edited["bbox"]})
+        for annotation in all_annotations:
             (annotation, is_deleted) = get_current_annotation(annotation,edited_annotations or {})
             if is_deleted:
                 continue
@@ -474,6 +539,52 @@ def create_app():
         # Close SVG
         svg_parts.append("""</svg></div>""")
         return "".join(svg_parts)
+    """ Json saving function """
+    def save_current_annotations(index: int,edited_annotations: dict):
+        # Load the current test JSON
+        with open(annotation_path,"r") as file:
+            annotation_JSON: dict[str,any] = json.load(file)
+        image_path = image_files[index]
+        # Apply local edits
+        updated_annotations = []
+        for annotation in annotation_JSON['annotations']:
+            annotation_id = int(annotation["id"])
+            if annotation_id in edited_annotations:
+                edits = edited_annotations[annotation_id]
+                if edits['deleted']:
+                    continue
+                new_annotation = {"id":edits["id"], "image_id":edits['image_id'],"category_id":edits["category_id"],
+                                  "bbox":edits['bbox'],"area":edits["area"],"is_crowd":edits["is_crowd"],
+                                  "segmentation":edits["segmentation"]}
+                updated_annotations.append(new_annotation)
+            else:
+                updated_annotations.append(annotation)
+
+        # Replace this image's annotations in the test JSON
+        for annotation in annotation_JSON['annotations']:
+            for new_annotation in updated_annotations:
+                if int(new_annotation['id']) == int(annotation['id']):
+                    annotation.update(new_annotation)
+                        
+        # Add locally created annotations
+        for annotation_id, edits in edited_annotations.items():
+            if edits['new']:
+                annotation_JSON['annotations'].append({"id": edits['id'],"image_id": edits['image_id'],
+                                        "category_id": int(edits["category_id"]),"bbox": edits["bbox"],
+                                        "area:":edits['area'], "is_crowd":0, "segmentation":[]})
+        # Remove deleted annotations
+        for annotation_id, edited in edited_annotations.items():
+            if edited['deleted']:
+                for annotation in annotation_JSON['annotations']:
+                    if annotation['id'] == edited['id']:
+                        annotation_JSON['annotations'].remove(annotation)
+
+        # Write the updated test JSON
+        with open(annotation_path, "w") as f:
+            json.dump(annotation_JSON, f, indent=4)
+        print(f"Saved annotations for {image_path.name}")
+
+    """Annotation utility functions/updating functions"""
     def select_svg_annotation(index: int, edited_annotations: dict, evt: gr.EventData):
         annotation_id = evt.annotation_id
         if annotation_id is None:
@@ -498,6 +609,7 @@ def create_app():
             "category_id": category_id,
             "category": categories.get(category_id,f"Unknown ({category_id})"),"bbox": selected_annotation.get("bbox", [])}
         return (render_interactive_image(index, int(annotation_id), edited_annotations),int(annotation_id),annotation_info)
+    
     def get_current_annotation(annotation,edited_annotations):
                 annotation_id = int(annotation["id"])
                 if annotation_id in edited_annotations:
@@ -506,19 +618,58 @@ def create_app():
                     is_deleted = edited_annotations[annotation_id]['deleted']
                     return edited, is_deleted
                 return annotation, False
+    
     def update_edited_annotation(index: int,edited_annotations: dict, evt: gr.EventData):
+        image_path = image_files[index]
+        image_record = coco_by_filename.get(image_path.name)
+        image_id = int(image_record['id'])
+        annotations = annotations_by_image.get(image_id,[])
         annotation_id = int(evt._data['annotation_id'])
+        for annotation in annotations:
+                    if annotation_id == annotation['id']:
+                        category = annotation['category_id']
         new_bbox = [float(value) for value in evt._data['bbox']]
+        area = new_bbox[2] * new_bbox[3]
         if annotation_id not in edited_annotations:
-            edited_annotations.update({annotation_id:{'bbox':new_bbox, 'deleted': False}})
+            edited_annotations.update({annotation_id:{'id':annotation_id,'bbox':new_bbox, 'deleted':False, "new":False,
+                                                       "image_id":image_id, "category_id":category,
+                                                       "area":area, "is_crowd":0,"segmentation":[]}})
         else:
-            edited_annotations.update({annotation_id:{'bbox':new_bbox, 'deleted':edited_annotations[annotation_id]['deleted']}})
-            print(edited_annotations)
+            edited_annotations.update({annotation_id:{'id':annotation_id,'bbox':new_bbox, 'deleted':edited_annotations[annotation_id]['deleted'],
+                                                      "new":edited_annotations[annotation_id]['new'],
+                                                      "image_id":image_id, "category_id":edited_annotations[annotation_id]['category_id'],
+                                                      "area":area, "is_crowd":0,"segmentation":[]}})
+        print(edited_annotations)
         return (render_interactive_image(index,annotation_id,edited_annotations), edited_annotations)
+    
     def delete_annotation(index: int, selected_annotation_id: int, edited_annotation: dict):
         if selected_annotation_id is not None:
-            edited_annotation.update({selected_annotation_id:{'bbox': edited_annotation[selected_annotation_id]['bbox'],'deleted': True}})
+            edited_annotation.update({selected_annotation_id:{'id':selected_annotation_id,
+                                                              'bbox': edited_annotation[selected_annotation_id]['bbox'],
+                                                              'deleted': True, 'new':edited_annotation[selected_annotation_id]['new'],
+                                                              "image_id":edited_annotation[selected_annotation_id]['image_id'],
+                                                              "category_id":edited_annotation[selected_annotation_id]['category_id'],
+                                                              "area":edited_annotation[selected_annotation_id]['area'],
+                                                              "is_crowd":edited_annotation[selected_annotation_id]["is_crowd"],
+                                                              "segmentation":edited_annotation[selected_annotation_id]["segmentation"]}})
         return (render_interactive_image(index,selected_annotation_id,edited_annotation),edited_annotation)
+    
+    def add_annotation(index: int,edited_annotations: dict,evt: gr.EventData):
+        image_path = image_files[index]
+        image_record = coco_by_filename.get(image_path.name)
+        image_id = int(image_record['id'])
+        bbox = [float(value)for value in evt._data["bbox"]]
+        area = bbox[2]*bbox[3]
+        existing_ids = set(int(annotation["id"])for annotation in annotations_by_image.get(int(coco_by_filename[image_files[index].name]["id"]),[]))
+        existing_ids.update(int(annotation_id)for annotation_id in edited_annotations)
+        new_annotation_id = (max(existing_ids, default=0) + 1)
+        edited_annotations[new_annotation_id] = {'id': new_annotation_id,'bbox':bbox, 'deleted':False, 'new':True, 
+                                                 'category_id':1, 'image_id':image_id,
+                                                 "area":area,"is_crowd":0,"segmentation":[]}
+        return(render_interactive_image(index,new_annotation_id,edited_annotations,False), edited_annotations,False)
+    
+    def enable_add_mode() -> bool:
+        return(True)
     
     """ Image cycling functions without wrap around to avoid confusion """
     def next_image(index: int, edited_annotations: dict):
@@ -529,48 +680,66 @@ def create_app():
     def previous_image(index: int, edited_annotations: dict):
         index = max(index - 1, 0)
         return render_interactive_image(index, edited_annotations=edited_annotations), index, None, {}
-
+    """App building and button handling"""
     with gr.Blocks(
         title="Building Dataset Cleaner",
     ) as app:
         image_index = gr.State(0)
         selected_annotation_id = gr.State(None)
         edited_annotations = gr.State({})
+        add_mode = gr.State(False)
         create_header()
 
         with gr.Row():
-
             # Left control panel
             with gr.Column(scale=1, min_width=150):
                 dataset_panel = create_dataset_panel()
-
             # Main image viewer
             with gr.Column(scale=5):
                 image_panel = create_image_panel()
-
             # Right annotation panel
             with gr.Column(scale=1, min_width=150):
                 annotation_panel = create_annotation_panel()
-
         gr.Markdown("---")
-
         create_status_bar()
+        """Event control and button interactions"""
         image_panel["image_display"].annotation_select(
             fn=select_svg_annotation,
             inputs=[image_index, edited_annotations],
             outputs=[image_panel["image_display"],selected_annotation_id,annotation_panel["annotation_info"]])
+        
         image_panel["image_display"].annotation_edit(
             fn=update_edited_annotation,
             inputs=[image_index, edited_annotations],
             outputs=[image_panel["image_display"],edited_annotations])
+        
         image_panel["image_display"].annotation_move(
                     fn=update_edited_annotation,
                     inputs=[image_index, edited_annotations],
                     outputs=[image_panel["image_display"],edited_annotations])
+        annotation_panel["apply_button"].click(fn=save_current_annotations,
+                                               inputs=[image_index,edited_annotations],
+                                               outputs=[])
         annotation_panel["delete_button"].click(
             fn=delete_annotation,
             inputs=[image_index,selected_annotation_id, edited_annotations],
             outputs=[image_panel["image_display"], edited_annotations])
+        
+        annotation_panel["Add_annotation"].click(
+            fn=enable_add_mode,
+            inputs=None,
+            outputs=add_mode)
+        
+        add_mode.change(
+            fn=lambda mode, index, selected, edits:render_interactive_image(index,selected,edits,mode),
+            inputs=[add_mode,image_index,selected_annotation_id,edited_annotations],
+            outputs=image_panel["image_display"])
+        
+        image_panel["image_display"].annotation_add(
+            fn=add_annotation,
+            inputs=[image_index, edited_annotations],
+            outputs=[image_panel["image_display"],edited_annotations,add_mode])
+
         app.load(fn=lambda: render_interactive_image(0),outputs=image_panel["image_display"])
         dataset_panel["next_button"].click(
             fn=next_image,
