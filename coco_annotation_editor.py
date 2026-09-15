@@ -13,6 +13,8 @@ python3 coco_annotation_editor.py \
 --images data/NHRA_Dataset/val \
 --annotations data/NHRA_Dataset/val_annotations_test.json
 Once executed copy and past URL into web browser to access UI
+To alter labels click the dropdown menu located at the bottom of the right panel then select the desired annotation
+make sure to click apply to save the changes to the JSON this is NOT done automatically
 """
 import argparse
 import colorsys
