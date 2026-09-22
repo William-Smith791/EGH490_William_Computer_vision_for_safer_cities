@@ -114,7 +114,7 @@ def create_dataset_panel():
     with gr.Column():
         gr.Markdown("### Dataset")
         image_counter = gr.Markdown(
-            "Image: 0 / 0"
+            "Image: 1 / 1005"
         )
         with gr.Row():
             previous_button = gr.Button("← Previous")
@@ -718,19 +718,21 @@ def create_app():
         return(True)
     
     """ Image cycling functions without wrap around to avoid confusion """
-    def next_image(index: int, edited_annotations: dict):
+    def next_image(index: int, edited_annotations: dict, image_counter):
         index = min(index + 1, len(image_files) - 1)
-        return render_interactive_image(index, edited_annotations=edited_annotations), index, None, None
+        image_counter = gr.Markdown(f"image: {index+1} / {len(coco_by_filename)}")
+        return render_interactive_image(index, edited_annotations=edited_annotations), index, None, None, image_counter
 
-    def previous_image(index: int, edited_annotations: dict):
+    def previous_image(index: int, edited_annotations: dict, image_counter):
         index = max(index - 1, 0)
-        return render_interactive_image(index, edited_annotations=edited_annotations), index, None, None
+        image_counter = gr.Markdown(f"image: {index+1} / {len(coco_by_filename)}")
+        return render_interactive_image(index, edited_annotations=edited_annotations), index, None, None, image_counter
     
     """App building and button handling"""
     with gr.Blocks(
         title="Building Dataset Cleaner",
     ) as app:
-        image_index = gr.State(0)
+        image_index = gr.State(50)
         selected_annotation_id = gr.State(None)
         edited_annotations = gr.State({})
         add_mode = gr.State(False)
@@ -740,6 +742,7 @@ def create_app():
             # Left control panel
             with gr.Column(scale=1, min_width=150):
                 dataset_panel = create_dataset_panel()
+                dataset_panel["image_counter"] = gr.Markdown(f"images: {image_index.value+1} / {len(coco_by_filename)}")
             # Main image viewer
             with gr.Column(scale=5):
                 image_panel = create_image_panel()
@@ -785,17 +788,16 @@ def create_app():
             fn=add_annotation,
             inputs=[image_index, edited_annotations],
             outputs=[image_panel["image_display"],edited_annotations,add_mode])
-
-        app.load(fn=lambda: render_interactive_image(0),outputs=image_panel["image_display"])
+        app.load(fn=render_interactive_image,inputs=image_index,outputs=image_panel["image_display"])
         dataset_panel["next_button"].click(
             fn=next_image,
-            inputs=[image_index, edited_annotations],
-            outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel['label_dropdown']]
+            inputs=[image_index, edited_annotations, dataset_panel["image_counter"]],
+            outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel['label_dropdown'],dataset_panel["image_counter"]]
         )
         dataset_panel["previous_button"].click(
                     fn=previous_image,
-                    inputs=[image_index, edited_annotations],
-                    outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel['label_dropdown']]
+                    inputs=[image_index, edited_annotations, dataset_panel["image_counter"]],
+                    outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel['label_dropdown'],dataset_panel["image_counter"]]
                 )
         annotation_panel["label_dropdown"].change(
         fn=update_annotation_label,
