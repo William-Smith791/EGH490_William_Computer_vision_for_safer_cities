@@ -6,12 +6,14 @@ Now you can execute the following terminal command (on Linux equivilent OS).
 python3 coco_annotation_editor.py \
 --images data/NHRA_Dataset/val \
 --annotations data/NHRA_Dataset/val_annotations.json \
+--change_log change_log.json
 --port 7870
 
 testing command
 python3 coco_annotation_editor.py \
 --images data/NHRA_Dataset/val \
---annotations data/NHRA_Dataset/val_annotations_test.json
+--annotations data/NHRA_Dataset/val_annotations_test.json \
+--change_log change_log.json
 Once executed copy and past URL into web browser to access UI
 To alter labels click the dropdown menu located at the bottom of the right panel then select the desired annotation
 make sure to click apply to save the changes to the JSON this is NOT done automatically
@@ -29,6 +31,11 @@ import html
 
 import gradio as gr
 from PIL import Image, ImageDraw, ImageFont
+"""Indexing constants"""
+ADDED_ANNOTATIONS = 0
+REMOVED_ANNOTATIONS = 1
+MOVED_ANNOTATIONS = 2
+CHANGED_LABELS = 3
 """ Miscellaneous functions"""
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -36,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--images",required=True, type=Path, help="Directory containing the dataset images")
     parser.add_argument("--annotations",required=True,type=Path,help="COCO annotation JSON file")
+    parser.add_argument("--change_log",required=True,type=Path,help="automatic change log")
     return parser.parse_args()
 
 def load_font(size: int) -> ImageFont.ImageFont:
@@ -404,6 +412,7 @@ def create_app():
     args = parse_args()
     image_dir = args.images.expanduser().resolve()
     annotation_path = args.annotations.expanduser().resolve()
+    change_log_path = args.change_log.expanduser().resolve()
     if not image_dir.is_dir():
         raise NotADirectoryError(
             f"Image directory does not exist: {image_dir}"
@@ -442,7 +451,7 @@ def create_app():
         # Add locally created annotations
         for annotation_id, edited in (edited_annotations or {}).items():
             if edited['new'] and edited['image_id'] == image_id:
-                all_annotations.append({"id": annotation_id,"image_id": edited['image_id'],
+                all_annotations.append({"id": edited['id'],"image_id": edited['image_id'],
                                         "category_id": edited["category_id"],"bbox": edited["bbox"]})
         for annotation in all_annotations:
             (annotation, is_deleted) = get_current_annotation(annotation,edited_annotations or {})
@@ -542,10 +551,14 @@ def create_app():
         return "".join(svg_parts)
     """ Json saving function """
     def save_current_annotations(index: int,edited_annotations: dict):
+        nonlocal annotations_by_image
+        changes = [0,0,0,0]
         # Load the current test JSON
         with open(annotation_path,"r") as file:
             annotation_JSON: dict[str,any] = json.load(file)
-        image_path = image_files[index]
+        # load change log
+        with open(change_log_path,"r") as log:
+            change_log: dict = json.load(log)
         # Apply local edits
         updated_annotations = []
         for annotation in annotation_JSON['annotations']:
@@ -558,6 +571,10 @@ def create_app():
                                   "bbox":edits['bbox'],"area":edits["area"],"is_crowd":edits["is_crowd"],
                                   "segmentation":edits["segmentation"]}
                 updated_annotations.append(new_annotation)
+                if edits['bbox'] != annotation['bbox']: 
+                    changes[MOVED_ANNOTATIONS] = changes[MOVED_ANNOTATIONS]+1
+                if edits['category_id'] != annotation['category_id']:
+                    changes[CHANGED_LABELS] = changes[CHANGED_LABELS]+1
             else:
                 updated_annotations.append(annotation)
 
@@ -573,17 +590,33 @@ def create_app():
                 annotation_JSON['annotations'].append({"id": edits['id'],"image_id": edits['image_id'],
                                         "category_id": int(edits["category_id"]),"bbox": edits["bbox"],
                                         "area:":edits['area'], "is_crowd":0, "segmentation":[]})
+                changes[ADDED_ANNOTATIONS] = changes[ADDED_ANNOTATIONS]+1
         # Remove deleted annotations
         for annotation_id, edited in edited_annotations.items():
-            if edited['deleted']:
+            if edited['deleted'] and not edited['new']:
                 for annotation in annotation_JSON['annotations']:
                     if annotation['id'] == edited['id']:
                         annotation_JSON['annotations'].remove(annotation)
-
+                        changes[REMOVED_ANNOTATIONS] = changes[REMOVED_ANNOTATIONS]+1
+        # document changes
+        change_log = {'false_positive': change_log['false_positive']+changes[REMOVED_ANNOTATIONS],
+                      'false_negative':change_log['false_negative']+changes[ADDED_ANNOTATIONS],
+                      'localisation':change_log['localisation']+changes[MOVED_ANNOTATIONS],
+                      'classification':change_log["classification"]+changes[CHANGED_LABELS]}
         # Write the updated test JSON
         with open(annotation_path, "w") as f:
             json.dump(annotation_JSON, f, indent=4)
-        print(f"Saved annotations for {image_path.name}")
+        # write the new change log
+        with open(change_log_path, "w") as log_write:
+            json.dump(change_log, log_write, indent=4)
+        print(f"changes saved")
+        edited_annotations.clear()
+        annotations_by_image.clear()
+        annotations_by_image = defaultdict(list)
+        for annotation in annotation_JSON["annotations"]:
+            image_id = int(annotation["image_id"])
+            annotations_by_image[image_id].append(annotation)
+        return(edited_annotations,render_interactive_image(index))
 
     """Annotation utility functions/updating functions"""
     def select_svg_annotation(index: int, edited_annotations: dict, evt: gr.EventData):
@@ -601,14 +634,12 @@ def create_app():
             if int(annotation["id"]) == int(annotation_id):
                 selected_annotation = annotation
                 break
+        if (annotation_id in edited_annotations):
+            if edited_annotations[annotation_id]['new']:
+                selected_annotation = edited_annotations[annotation_id]
         if selected_annotation is None:
             return (render_interactive_image(index,None,edited_annotations),None,None)
         category_id = int(selected_annotation["category_id"])
-        annotation_info = {
-            "id": int(selected_annotation["id"]),
-            "image_id": int(selected_annotation["image_id"]),
-            "category_id": category_id,
-            "category": categories.get(category_id,f"Unknown ({category_id})"),"bbox": selected_annotation.get("bbox", [])}
         return (render_interactive_image(index, int(annotation_id), edited_annotations),int(annotation_id),
                 categories.get(category_id,f"Unknown ({category_id})"))
     
@@ -621,7 +652,7 @@ def create_app():
                     return edited, is_deleted
                 return annotation, False
     
-    def update_edited_annotation(index: int,edited_annotations: dict, evt: gr.EventData):
+    def update_edited_annotation(index: int,edited_annotations: dict,evt: gr.EventData):
         image_path = image_files[index]
         image_record = coco_by_filename.get(image_path.name)
         image_id = int(image_record['id'])
@@ -655,7 +686,7 @@ def create_app():
                                                               "segmentation":edited_annotation[selected_annotation_id]["segmentation"]}})
         return (render_interactive_image(index,selected_annotation_id,edited_annotation),edited_annotation)
     
-    def add_annotation(index: int,edited_annotations: dict,evt: gr.EventData):
+    def add_annotation(index: int,edited_annotations: dict, evt: gr.EventData):
         image_path = image_files[index]
         image_record = coco_by_filename.get(image_path.name)
         image_id = int(image_record['id'])
@@ -665,7 +696,7 @@ def create_app():
         existing_ids.update(int(annotation_id)for annotation_id in edited_annotations)
         new_annotation_id = (max(existing_ids, default=0) + 1)
         edited_annotations[new_annotation_id] = {'id': new_annotation_id,'bbox':bbox, 'deleted':False, 'new':True, 
-                                                 'category_id':1, 'image_id':image_id,
+                                                 'category_id':0, 'image_id':image_id,
                                                  "area":area,"is_crowd":0,"segmentation":[]}
         return(render_interactive_image(index,new_annotation_id,edited_annotations,False), edited_annotations,False)
 
@@ -734,7 +765,7 @@ def create_app():
                     outputs=[image_panel["image_display"],edited_annotations])
         annotation_panel["apply_button"].click(fn=save_current_annotations,
                                                inputs=[image_index,edited_annotations],
-                                               outputs=[])
+                                               outputs=[edited_annotations,image_panel["image_display"]])
         annotation_panel["delete_button"].click(
             fn=delete_annotation,
             inputs=[image_index,selected_annotation_id, edited_annotations],
@@ -767,9 +798,9 @@ def create_app():
                     outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel['label_dropdown']]
                 )
         annotation_panel["label_dropdown"].change(
-    fn=update_annotation_label,
-    inputs=[image_index,selected_annotation_id,edited_annotations,annotation_panel["label_dropdown"]],
-    outputs=[edited_annotations,image_panel["image_display"]])
+        fn=update_annotation_label,
+        inputs=[image_index,selected_annotation_id,edited_annotations,annotation_panel["label_dropdown"]],
+        outputs=[edited_annotations,image_panel["image_display"]])
     app.launch()
 
 
