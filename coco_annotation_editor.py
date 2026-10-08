@@ -2,7 +2,7 @@
 To open the editor window execute the following command in the terminal with the python venv
 venv setup: install gradio with pip install gradio activate venv with source venv_folder_name/bin/activate
 Now you can execute the following terminal command (on Linux equivilent OS).
-
+# Note return to image 221 (index 220) at later time
 python3 coco_annotation_editor.py \
 --images data/NHRA_Dataset/val \
 --annotations data/NHRA_Dataset/val_annotations.json \
@@ -97,7 +97,7 @@ def load_coco_annotations(annotation_path: Path) -> tuple[dict[int,dict[str,Any]
         int(category["id"]): str(category["name"])
         for category in coco.get("categories", [])
     }
-    return images, annotations_by_image, categories
+    return coco,images, annotations_by_image, categories
 """ UI setup functions"""
 def create_header():
     """Create the application header."""
@@ -421,7 +421,7 @@ def create_app():
             raise FileNotFoundError(f"Annotation file does not exist: {annotation_path}")
 
     image_files = get_image_files(image_dir)
-    (coco_images,annotations_by_image,categories) = load_coco_annotations(annotation_path)
+    (coco,coco_images,annotations_by_image,categories) = load_coco_annotations(annotation_path)
     coco_by_filename = {str(image["file_name"]): image
                         for image in coco_images.values()}
     """ Rendering function"""
@@ -551,6 +551,9 @@ def create_app():
         return "".join(svg_parts)
     """ Json saving function """
     def save_current_annotations(index: int,edited_annotations: dict):
+        nonlocal coco_images
+        nonlocal coco
+        nonlocal categories
         nonlocal annotations_by_image
         changes = [0,0,0,0]
         # Load the current test JSON
@@ -612,10 +615,9 @@ def create_app():
         print(f"changes saved")
         edited_annotations.clear()
         annotations_by_image.clear()
-        annotations_by_image = defaultdict(list)
-        for annotation in annotation_JSON["annotations"]:
-            image_id = int(annotation["image_id"])
-            annotations_by_image[image_id].append(annotation)
+        categories.clear()
+        coco_images.clear()
+        coco,coco_images,annotations_by_image,categories = load_coco_annotations(annotation_path)
         return(edited_annotations,render_interactive_image(index))
 
     """Annotation utility functions/updating functions"""
@@ -692,9 +694,14 @@ def create_app():
         image_id = int(image_record['id'])
         bbox = [float(value)for value in evt._data["bbox"]]
         area = bbox[2]*bbox[3]
-        existing_ids = set(int(annotation["id"])for annotation in annotations_by_image.get(int(coco_by_filename[image_files[index].name]["id"]),[]))
-        existing_ids.update(int(annotation_id)for annotation_id in edited_annotations)
-        new_annotation_id = (max(existing_ids, default=0) + 1)
+        existing_ids = []
+        for annotation in coco.get("annotations",):
+            annotation_id = annotation['id']
+            existing_ids.append(annotation_id)
+        for id, annotation in edited_annotations.items():
+            if annotation['new']:
+                existing_ids.append(id)
+        new_annotation_id = max(existing_ids) + 1
         edited_annotations[new_annotation_id] = {'id': new_annotation_id,'bbox':bbox, 'deleted':False, 'new':True, 
                                                  'category_id':0, 'image_id':image_id,
                                                  "area":area,"is_crowd":0,"segmentation":[]}
@@ -732,7 +739,7 @@ def create_app():
     with gr.Blocks(
         title="Building Dataset Cleaner",
     ) as app:
-        image_index = gr.State(50)
+        image_index = gr.State(656)
         selected_annotation_id = gr.State(None)
         edited_annotations = gr.State({})
         add_mode = gr.State(False)
