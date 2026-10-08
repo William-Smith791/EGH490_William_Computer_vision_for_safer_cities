@@ -1,6 +1,7 @@
 # EGH490_William_Computer_vision_for_safer_cities
 Code repository for William Smith's EGH490 project. Includes code for developed data cleaning editor and model training and evaluation.
 Programming languages used: Python.
+
 Instructions for using the data cleaning UI:
 
 Create a file structure within a virtual environment where:
