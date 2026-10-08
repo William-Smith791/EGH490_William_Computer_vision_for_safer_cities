@@ -1,22 +1,31 @@
 """
 To open the editor window execute the following command in the terminal with the python venv
-venv setup: install gradio with pip install gradio activate venv with source venv_folder_name/bin/activate
-Now you can execute the following terminal command (on Linux equivilent OS).
-# Note return to image 221 (index 220) at later time
+venv setup: install gradio with pip install gradio activate venv with: source venv_folder_name/bin/activate, when in its local directory
+Now you can execute the following terminal command (on Linux equivilent OS unsure of windows compatability).
+
+For a shared public link
 python3 coco_annotation_editor.py \
 --images data/NHRA_Dataset/val \
 --annotations data/NHRA_Dataset/val_annotations.json \
---change_log change_log.json
---port 7870
+--change_log data/change_log.json \
+--port 7870 \
+--share
 
-testing command
+For a private unshared link
 python3 coco_annotation_editor.py \
 --images data/NHRA_Dataset/val \
---annotations data/NHRA_Dataset/val_annotations_test.json \
---change_log change_log.json
+--annotations data/NHRA_Dataset/val_annotations.json \
+--change_log data/change_log.json \
+--port 7870
+
+
 Once executed copy and past URL into web browser to access UI
 To alter labels click the dropdown menu located at the bottom of the right panel then select the desired annotation
 make sure to click apply to save the changes to the JSON this is NOT done automatically
+Cycle through the images using the next and previous buttons note that these do not wrap around (ie does not go from 1 -> last or last -> 1)
+Move annotations by dragging and clicking, resise by clicking the annotation then dragging one of the boxes that appear in its corners
+Add anotations by clicking the add annotation buttons then dragging and clicking over an area to create it
+delete annotations by clicking an annnotations to select it then clicking the delete annotations button
 """
 import argparse
 import colorsys
@@ -38,12 +47,13 @@ MOVED_ANNOTATIONS = 2
 CHANGED_LABELS = 3
 """ Miscellaneous functions"""
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Building Dataset Cleaner"
-    )
+    parser = argparse.ArgumentParser(description="Building Dataset Cleaner")
     parser.add_argument("--images",required=True, type=Path, help="Directory containing the dataset images")
     parser.add_argument("--annotations",required=True,type=Path,help="COCO annotation JSON file")
     parser.add_argument("--change_log",required=True,type=Path,help="automatic change log")
+    parser.add_argument("--port", type=int, default=7870, help="Gradio server port")
+    parser.add_argument("--host", default="127.0.0.1", help="Server host, e.g. 0.0.0.0 for remote access")
+    parser.add_argument("--share", action="store_true", help="Create a Gradio share link")
     return parser.parse_args()
 
 def load_font(size: int) -> ImageFont.ImageFont:
@@ -810,7 +820,9 @@ def create_app():
         fn=update_annotation_label,
         inputs=[image_index,selected_annotation_id,edited_annotations,annotation_panel["label_dropdown"]],
         outputs=[edited_annotations,image_panel["image_display"]])
-    app.launch()
+    app.launch(server_name=args.host,
+               server_port=args.port,
+               share=args.share)
 
 
 if __name__ == "__main__":
