@@ -3,11 +3,12 @@ To open the editor window execute the following command in the terminal with the
 venv setup: install gradio with pip install gradio activate venv with: source venv_folder_name/bin/activate, when in its local directory
 Now you can execute the following terminal command (on Linux equivilent OS unsure of windows compatability).
 
-For a shared public link
+For a shared public link change image index to start at seperate image (n-1 the image number you wish)
 python3 coco_annotation_editor.py \
 --images data/NHRA_Dataset/val \
 --annotations data/NHRA_Dataset/val_annotations.json \
 --change_log data/change_log.json \
+--image_index 0 \
 --port 7870 \
 --share
 
@@ -16,6 +17,7 @@ python3 coco_annotation_editor.py \
 --images data/NHRA_Dataset/val \
 --annotations data/NHRA_Dataset/val_annotations.json \
 --change_log data/change_log.json \
+--image_index 0 \
 --port 7870
 
 
@@ -52,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--annotations",required=True,type=Path,help="COCO annotation JSON file")
     parser.add_argument("--change_log",required=True,type=Path,help="automatic change log")
     parser.add_argument("--port", type=int, default=7870, help="Gradio server port")
+    parser.add_argument("--image_index", type=int, default=0, help="index number of the image you wish to start from")
     parser.add_argument("--host", default="127.0.0.1", help="Server host, e.g. 0.0.0.0 for remote access")
     parser.add_argument("--share", action="store_true", help="Create a Gradio share link")
     return parser.parse_args()
@@ -749,7 +752,7 @@ def create_app():
     with gr.Blocks(
         title="Building Dataset Cleaner",
     ) as app:
-        image_index = gr.State(656)
+        image_index = gr.State(args.image_index)
         selected_annotation_id = gr.State(None)
         edited_annotations = gr.State({})
         add_mode = gr.State(False)
