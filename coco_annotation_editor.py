@@ -126,9 +126,7 @@ def create_dataset_panel():
     """Create the dataset selection/control panel."""
     with gr.Column():
         gr.Markdown("### Dataset")
-        image_counter = gr.Markdown(
-            "Image: 1 / 1005"
-        )
+        image_counter = gr.Markdown("Image: 1 / 1005")
         with gr.Row():
             previous_button = gr.Button("← Previous")
             next_button = gr.Button("Next →")
@@ -762,7 +760,7 @@ def create_app():
             # Left control panel
             with gr.Column(scale=1, min_width=150):
                 dataset_panel = create_dataset_panel()
-                dataset_panel["image_counter"] = gr.Markdown(f"images: {image_index.value+1} / {len(coco_by_filename)}")
+                #dataset_panel["image_counter"] = gr.Markdown(f"images: {image_index.value+1} / {len(coco_by_filename)}")
             # Main image viewer
             with gr.Column(scale=5):
                 image_panel = create_image_panel()
