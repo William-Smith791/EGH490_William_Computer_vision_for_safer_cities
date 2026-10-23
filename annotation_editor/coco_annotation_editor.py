@@ -132,11 +132,8 @@ def create_dataset_panel():
             next_button = gr.Button("Next →")
         gr.Markdown("### Display")
         show_annotations = gr.Checkbox(
-            label="Show bounding boxes",
-            value=True
-        )
-        show_labels = gr.Checkbox(
-            label="Show labels",
+            label="toggle_annotations",
+            interactive=True,
             value=True
         )
         return {
@@ -144,7 +141,6 @@ def create_dataset_panel():
             "previous_button": previous_button,
             "next_button": next_button,
             "show_annotations": show_annotations,
-            "show_labels": show_labels,
         }
 
 
@@ -436,7 +432,7 @@ def create_app():
     coco_by_filename = {str(image["file_name"]): image
                         for image in coco_images.values()}
     """ Rendering function"""
-    def render_interactive_image(index: int, selected_annotation_id=None, edited_annotations=None, add_mode=False):
+    def render_interactive_image(index: int, show_annotations, selected_annotation_id=None, edited_annotations=None, add_mode=False):
         image_path = image_files[index]
         image = Image.open(image_path).convert("RGB")
         image_record = coco_by_filename.get(image_path.name)
@@ -458,110 +454,111 @@ def create_app():
             href="data:image/jpeg;base64,{image_data}" x="0" y="0" width="{image.width}" height="{image.height}"
             />"""]
         # Draw annotations
-        all_annotations = list(annotations)
-        # Add locally created annotations
-        for annotation_id, edited in (edited_annotations or {}).items():
-            if edited['new'] and edited['image_id'] == image_id:
-                all_annotations.append({"id": edited['id'],"image_id": edited['image_id'],
-                                        "category_id": edited["category_id"],"bbox": edited["bbox"]})
-        for annotation in all_annotations:
-            (annotation, is_deleted) = get_current_annotation(annotation,edited_annotations or {})
-            if is_deleted:
-                continue
-            bbox = annotation.get("bbox")
-            if not bbox or len(bbox) < 4:
-                continue
-            x, y, width, height = map(float, bbox[:4])
-            annotation_id = int(annotation["id"])
-            category_id = int(annotation["category_id"])
-            red, green, blue = colour_for_category(category_id)
-            colour = f"rgb({red},{green},{blue})"
-            # Highlight selected annotation
-            label = categories.get(category_id,f"Unknown ({category_id})")
-            font_size = max(16,round(min(image.width, image.height) / 45))
-            padding = 3
-            label_width = len(label) * font_size * 0.6
-            label_height = font_size + 2 * padding
-            # Normal annotation boundary
-            annotation_svg = f""" 
-            <g
-                class="annotation-group"
-                data-annotation-id="{annotation_id}"
-                transform="translate(0, 0)"
-                style="cursor: move;"
-            >
-                <rect
-                class="annotation-box"
-                x="{x}" y="{y}" width="{width}" height="{height}" 
-                fill="transparent" stroke="{colour}" stroke-width="3"
-                />
-                <rect
-                    class="annotation-label-bg"
-                    x="{x}" y="{y}" width="{label_width + 2 * padding}" height="{label_height}" fill="{colour}"
-                    style="pointer-events: none;"
-                />
-                <text
-                    class="annotation-label"
-                    x="{x + padding}" y="{y + font_size}" font-size="{font_size}px" font-family="Arial, sans-serif"
-                    font-weight="bold" fill="white" stroke="black" stroke-width="1" paint-order="stroke"
-                    style="pointer-events: none;"
+        if show_annotations:
+            all_annotations = list(annotations)
+            # Add locally created annotations
+            for annotation_id, edited in (edited_annotations or {}).items():
+                if edited['new'] and edited['image_id'] == image_id:
+                    all_annotations.append({"id": edited['id'],"image_id": edited['image_id'],
+                                            "category_id": edited["category_id"],"bbox": edited["bbox"]})
+            for annotation in all_annotations:
+                (annotation, is_deleted) = get_current_annotation(annotation,edited_annotations or {})
+                if is_deleted:
+                    continue
+                bbox = annotation.get("bbox")
+                if not bbox or len(bbox) < 4:
+                    continue
+                x, y, width, height = map(float, bbox[:4])
+                annotation_id = int(annotation["id"])
+                category_id = int(annotation["category_id"])
+                red, green, blue = colour_for_category(category_id)
+                colour = f"rgb({red},{green},{blue})"
+                # Highlight selected annotation
+                label = categories.get(category_id,f"Unknown ({category_id})")
+                font_size = max(16,round(min(image.width, image.height) / 45))
+                padding = 3
+                label_width = len(label) * font_size * 0.6
+                label_height = font_size + 2 * padding
+                # Normal annotation boundary
+                annotation_svg = f""" 
+                <g
+                    class="annotation-group"
+                    data-annotation-id="{annotation_id}"
+                    transform="translate(0, 0)"
+                    style="cursor: move;"
                 >
-                {label}</text>
-                """
-            if annotation_id == selected_annotation_id:
-                annotation_svg += f"""
-                <!-- Resize handles -->
                     <rect
-                        class="resize-handle handle-tl"
-                        x="{x - 6}"
-                        y="{y - 6}"
-                        width="12"
-                        height="12"
-                        fill="white"
-                        stroke="black"
-                        stroke-width="2"
-                        style="cursor: nwse-resize;"
+                    class="annotation-box"
+                    x="{x}" y="{y}" width="{width}" height="{height}" 
+                    fill="transparent" stroke="{colour}" stroke-width="3"
                     />
                     <rect
-                        class="resize-handle handle-tr"
-                        x="{x + width - 6}"
-                        y="{y - 6}"
-                        width="12"
-                        height="12"
-                        fill="white"
-                        stroke="black"
-                        stroke-width="2"
-                        style="cursor: nesw-resize;"
+                        class="annotation-label-bg"
+                        x="{x}" y="{y}" width="{label_width + 2 * padding}" height="{label_height}" fill="{colour}"
+                        style="pointer-events: none;"
                     />
-                    <rect
-                        class="resize-handle handle-bl"
-                        x="{x - 6}"
-                        y="{y + height - 6}"
-                        width="12"
-                        height="12"
-                        fill="white"
-                        stroke="black"
-                        stroke-width="2"
-                        style="cursor: nesw-resize;"
-                    />
-                    <rect
-                        class="resize-handle handle-br"
-                        x="{x + width - 6}"
-                        y="{y + height - 6}"
-                        width="12"
-                        height="12"
-                        fill="white"
-                        stroke="black"
-                        stroke-width="2"
-                        style="cursor: nwse-resize;"
-                        />"""
-            annotation_svg+= f"""</g>"""
-            svg_parts.append(annotation_svg)
+                    <text
+                        class="annotation-label"
+                        x="{x + padding}" y="{y + font_size}" font-size="{font_size}px" font-family="Arial, sans-serif"
+                        font-weight="bold" fill="white" stroke="black" stroke-width="1" paint-order="stroke"
+                        style="pointer-events: none;"
+                    >
+                    {label}</text>
+                    """
+                if annotation_id == selected_annotation_id:
+                    annotation_svg += f"""
+                    <!-- Resize handles -->
+                        <rect
+                            class="resize-handle handle-tl"
+                            x="{x - 6}"
+                            y="{y - 6}"
+                            width="12"
+                            height="12"
+                            fill="white"
+                            stroke="black"
+                            stroke-width="2"
+                            style="cursor: nwse-resize;"
+                        />
+                        <rect
+                            class="resize-handle handle-tr"
+                            x="{x + width - 6}"
+                            y="{y - 6}"
+                            width="12"
+                            height="12"
+                            fill="white"
+                            stroke="black"
+                            stroke-width="2"
+                            style="cursor: nesw-resize;"
+                        />
+                        <rect
+                            class="resize-handle handle-bl"
+                            x="{x - 6}"
+                            y="{y + height - 6}"
+                            width="12"
+                            height="12"
+                            fill="white"
+                            stroke="black"
+                            stroke-width="2"
+                            style="cursor: nesw-resize;"
+                        />
+                        <rect
+                            class="resize-handle handle-br"
+                            x="{x + width - 6}"
+                            y="{y + height - 6}"
+                            width="12"
+                            height="12"
+                            fill="white"
+                            stroke="black"
+                            stroke-width="2"
+                            style="cursor: nwse-resize;"
+                            />"""
+                annotation_svg+= f"""</g>"""
+                svg_parts.append(annotation_svg)
         # Close SVG
         svg_parts.append("""</svg></div>""")
         return "".join(svg_parts)
     """ Json saving function """
-    def save_current_annotations(index: int,edited_annotations: dict):
+    def save_current_annotations(index: int, show_annotations:bool, edited_annotations: dict):
         nonlocal coco_images
         nonlocal coco
         nonlocal categories
@@ -623,38 +620,38 @@ def create_app():
         # write the new change log
         with open(change_log_path, "w") as log_write:
             json.dump(change_log, log_write, indent=4)
-        print(f"changes saved")
         edited_annotations.clear()
         annotations_by_image.clear()
         categories.clear()
         coco_images.clear()
         coco,coco_images,annotations_by_image,categories = load_coco_annotations(annotation_path)
-        return(edited_annotations,render_interactive_image(index))
+        return(edited_annotations,render_interactive_image(index,show_annotations))
 
     """Annotation utility functions/updating functions"""
-    def select_svg_annotation(index: int, edited_annotations: dict, evt: gr.EventData):
-        annotation_id = evt.annotation_id
-        if annotation_id is None:
-            raise ValueError(f"parsed annotation ID is of None type: expected integer")
-        image_path = image_files[index]
-        image_record = coco_by_filename.get(image_path.name)
-        if image_record is None:
-            raise ValueError(f"parsed image path of type None: expected String")
-        image_id = int(image_record["id"])
-        annotations = annotations_by_image.get(image_id, [])
-        selected_annotation = None
-        for annotation in annotations:
-            if int(annotation["id"]) == int(annotation_id):
-                selected_annotation = annotation
-                break
-        if (annotation_id in edited_annotations):
-            if edited_annotations[annotation_id]['new']:
-                selected_annotation = edited_annotations[annotation_id]
-        if selected_annotation is None:
-            return (render_interactive_image(index,None,edited_annotations),None,None)
-        category_id = int(selected_annotation["category_id"])
-        return (render_interactive_image(index, int(annotation_id), edited_annotations),int(annotation_id),
-                categories.get(category_id,f"Unknown ({category_id})"))
+    def select_svg_annotation(index: int, show_annotations: bool, edited_annotations: dict, evt: gr.EventData):
+        if show_annotations:
+            annotation_id = evt.annotation_id
+            if annotation_id is None:
+                raise ValueError(f"parsed annotation ID is of None type: expected integer")
+            image_path = image_files[index]
+            image_record = coco_by_filename.get(image_path.name)
+            if image_record is None:
+                raise ValueError(f"parsed image path of type None: expected String")
+            image_id = int(image_record["id"])
+            annotations = annotations_by_image.get(image_id, [])
+            selected_annotation = None
+            for annotation in annotations:
+                if int(annotation["id"]) == int(annotation_id):
+                    selected_annotation = annotation
+                    break
+            if (annotation_id in edited_annotations):
+                if edited_annotations[annotation_id]['new']:
+                    selected_annotation = edited_annotations[annotation_id]
+            if selected_annotation is None:
+                return (render_interactive_image(index,show_annotations,None,edited_annotations),None,None)
+            category_id = int(selected_annotation["category_id"])
+            return (render_interactive_image(index, show_annotations, int(annotation_id), edited_annotations),int(annotation_id),
+                    categories.get(category_id,f"Unknown ({category_id})"))
     
     def get_current_annotation(annotation,edited_annotations):
                 annotation_id = int(annotation["id"])
@@ -665,86 +662,94 @@ def create_app():
                     return edited, is_deleted
                 return annotation, False
     
-    def update_edited_annotation(index: int,edited_annotations: dict,evt: gr.EventData):
-        image_path = image_files[index]
-        image_record = coco_by_filename.get(image_path.name)
-        image_id = int(image_record['id'])
-        annotations = annotations_by_image.get(image_id,[])
-        annotation_id = int(evt._data['annotation_id'])
-        for annotation in annotations:
-                    if annotation_id == annotation['id']:
-                        category = annotation['category_id']
-        new_bbox = [float(value) for value in evt._data['bbox']]
-        area = new_bbox[2] * new_bbox[3]
-        if annotation_id not in edited_annotations:
-            edited_annotations.update({annotation_id:{'id':annotation_id,'bbox':new_bbox, 'deleted':False, "new":False,
-                                                       "image_id":image_id, "category_id":category,
-                                                       "area":area, "is_crowd":0,"segmentation":[]}})
-        else:
-            edited_annotations.update({annotation_id:{'id':annotation_id,'bbox':new_bbox, 'deleted':edited_annotations[annotation_id]['deleted'],
-                                                      "new":edited_annotations[annotation_id]['new'],
-                                                      "image_id":image_id, "category_id":edited_annotations[annotation_id]['category_id'],
-                                                      "area":area, "is_crowd":0,"segmentation":[]}})
-        return (render_interactive_image(index,annotation_id,edited_annotations), edited_annotations)
+    def update_edited_annotation(index: int, show_annotations: bool, edited_annotations: dict,evt: gr.EventData):
+        if show_annotations:
+            image_path = image_files[index]
+            image_record = coco_by_filename.get(image_path.name)
+            image_id = int(image_record['id'])
+            annotations = annotations_by_image.get(image_id,[])
+            annotation_id = int(evt._data['annotation_id'])
+            for annotation in annotations:
+                        if annotation_id == annotation['id']:
+                            category = annotation['category_id']
+            new_bbox = [float(value) for value in evt._data['bbox']]
+            area = new_bbox[2] * new_bbox[3]
+            if annotation_id not in edited_annotations:
+                edited_annotations.update({annotation_id:{'id':annotation_id,'bbox':new_bbox, 'deleted':False, "new":False,
+                                                        "image_id":image_id, "category_id":category,
+                                                        "area":area, "is_crowd":0,"segmentation":[]}})
+            else:
+                edited_annotations.update({annotation_id:{'id':annotation_id,'bbox':new_bbox, 'deleted':edited_annotations[annotation_id]['deleted'],
+                                                        "new":edited_annotations[annotation_id]['new'],
+                                                        "image_id":image_id, "category_id":edited_annotations[annotation_id]['category_id'],
+                                                        "area":area, "is_crowd":0,"segmentation":[]}})
+            return (render_interactive_image(index,show_annotations,annotation_id,edited_annotations), edited_annotations)
     
-    def delete_annotation(index: int, selected_annotation_id: int, edited_annotation: dict):
-        if selected_annotation_id is not None:
-            edited_annotation.update({selected_annotation_id:{'id':selected_annotation_id,
-                                                              'bbox': edited_annotation[selected_annotation_id]['bbox'],
-                                                              'deleted': True, 'new':edited_annotation[selected_annotation_id]['new'],
-                                                              "image_id":edited_annotation[selected_annotation_id]['image_id'],
-                                                              "category_id":edited_annotation[selected_annotation_id]['category_id'],
-                                                              "area":edited_annotation[selected_annotation_id]['area'],
-                                                              "is_crowd":edited_annotation[selected_annotation_id]["is_crowd"],
-                                                              "segmentation":edited_annotation[selected_annotation_id]["segmentation"]}})
-        return (render_interactive_image(index,selected_annotation_id,edited_annotation),edited_annotation)
+    def delete_annotation(index: int, show_annotations: bool, selected_annotation_id: int, edited_annotation: dict):
+        if show_annotations:
+            if selected_annotation_id is not None:
+                edited_annotation.update({selected_annotation_id:{'id':selected_annotation_id,
+                                                                'bbox': edited_annotation[selected_annotation_id]['bbox'],
+                                                                'deleted': True, 'new':edited_annotation[selected_annotation_id]['new'],
+                                                                "image_id":edited_annotation[selected_annotation_id]['image_id'],
+                                                                "category_id":edited_annotation[selected_annotation_id]['category_id'],
+                                                                "area":edited_annotation[selected_annotation_id]['area'],
+                                                                "is_crowd":edited_annotation[selected_annotation_id]["is_crowd"],
+                                                                "segmentation":edited_annotation[selected_annotation_id]["segmentation"]}})
+            return (render_interactive_image(index,show_annotations,selected_annotation_id,edited_annotation),edited_annotation)
     
-    def add_annotation(index: int,edited_annotations: dict, evt: gr.EventData):
-        image_path = image_files[index]
-        image_record = coco_by_filename.get(image_path.name)
-        image_id = int(image_record['id'])
-        bbox = [float(value)for value in evt._data["bbox"]]
-        area = bbox[2]*bbox[3]
-        existing_ids = []
-        for annotation in coco.get("annotations",):
-            annotation_id = annotation['id']
-            existing_ids.append(annotation_id)
-        for id, annotation in edited_annotations.items():
-            if annotation['new']:
-                existing_ids.append(id)
-        new_annotation_id = max(existing_ids) + 1
-        edited_annotations[new_annotation_id] = {'id': new_annotation_id,'bbox':bbox, 'deleted':False, 'new':True, 
-                                                 'category_id':0, 'image_id':image_id,
-                                                 "area":area,"is_crowd":0,"segmentation":[]}
-        return(render_interactive_image(index,new_annotation_id,edited_annotations,False), edited_annotations,False)
+    def add_annotation(index: int,show_annotations: bool, edited_annotations: dict, evt: gr.EventData):
+        if show_annotations:
+            image_path = image_files[index]
+            image_record = coco_by_filename.get(image_path.name)
+            image_id = int(image_record['id'])
+            bbox = [float(value)for value in evt._data["bbox"]]
+            area = bbox[2]*bbox[3]
+            existing_ids = []
+            for annotation in coco.get("annotations",):
+                annotation_id = annotation['id']
+                existing_ids.append(annotation_id)
+            for id, annotation in edited_annotations.items():
+                if annotation['new']:
+                    existing_ids.append(id)
+            new_annotation_id = max(existing_ids) + 1
+            edited_annotations[new_annotation_id] = {'id': new_annotation_id,'bbox':bbox, 'deleted':False, 'new':True, 
+                                                    'category_id':0, 'image_id':image_id,
+                                                    "area":area,"is_crowd":0,"segmentation":[]}
+            return(render_interactive_image(index,show_annotations,new_annotation_id,edited_annotations,False), edited_annotations,False)
 
-    def update_annotation_label(index: int,annotation_id: int,edited_annotations: dict,label: str):
-        if annotation_id is None or label is None:
-            return (edited_annotations or {},render_interactive_image(index,annotation_id,edited_annotations or {}))
-        # Find the category ID corresponding to the selected label
-        category_id = None
-        for cat_id, category_name in categories.items():
-            if category_name == label:
-                category_id = int(cat_id)
-                break
-        if category_id is None:
-            raise ValueError(f"Unknown annotation label: {label}")
-        edited_annotations[annotation_id]["category_id"] = category_id
-        return (edited_annotations,render_interactive_image(index,int(annotation_id),edited_annotations))
+    def update_annotation_label(index: int, show_annotations: bool, annotation_id: int,edited_annotations: dict,label: str):
+        if show_annotations:
+            if annotation_id is None or label is None:
+                return (edited_annotations or {},render_interactive_image(index,show_annotations,annotation_id,edited_annotations or {}))
+            # Find the category ID corresponding to the selected label
+            category_id = None
+            for cat_id, category_name in categories.items():
+                if category_name == label:
+                    category_id = int(cat_id)
+                    break
+            if category_id is None:
+                raise ValueError(f"Unknown annotation label: {label}")
+            edited_annotations[annotation_id]["category_id"] = category_id
+            return (edited_annotations,render_interactive_image(index,show_annotations,int(annotation_id),edited_annotations))
     
     def enable_add_mode() -> bool:
         return(True)
     
     """ Image cycling functions without wrap around to avoid confusion """
-    def next_image(index: int, edited_annotations: dict, image_counter):
+    def next_image(index: int, show_annotations:bool, edited_annotations: dict, image_counter):
         index = min(index + 1, len(image_files) - 1)
         image_counter = gr.Markdown(f"image: {index+1} / {len(coco_by_filename)}")
-        return render_interactive_image(index, edited_annotations=edited_annotations), index, None, None, image_counter
+        return render_interactive_image(index, show_annotations, edited_annotations=edited_annotations), index, None, None, image_counter
 
-    def previous_image(index: int, edited_annotations: dict, image_counter):
+    def previous_image(index: int, show_annotations:bool, edited_annotations: dict, image_counter):
         index = max(index - 1, 0)
         image_counter = gr.Markdown(f"image: {index+1} / {len(coco_by_filename)}")
-        return render_interactive_image(index, edited_annotations=edited_annotations), index, None, None, image_counter
+        return render_interactive_image(index, show_annotations, edited_annotations=edited_annotations), index, None, None, image_counter
+
+    def toggle(index, show_annotations, selected_annotation_id, edited_annotations):
+        show_annotations = not show_annotations
+        return(render_interactive_image(index,show_annotations, selected_annotation_id, edited_annotations), show_annotations)
     
     """App building and button handling"""
     with gr.Blocks(
@@ -754,6 +759,7 @@ def create_app():
         selected_annotation_id = gr.State(None)
         edited_annotations = gr.State({})
         add_mode = gr.State(False)
+        show_annotations = gr.State(True)
         create_header()
 
         with gr.Row():
@@ -772,24 +778,24 @@ def create_app():
         """Event control and button interactions"""
         image_panel["image_display"].annotation_select(
             fn=select_svg_annotation,
-            inputs=[image_index, edited_annotations],
+            inputs=[image_index, show_annotations, edited_annotations],
             outputs=[image_panel["image_display"],selected_annotation_id,annotation_panel['label_dropdown']])
         
         image_panel["image_display"].annotation_edit(
             fn=update_edited_annotation,
-            inputs=[image_index, edited_annotations],
+            inputs=[image_index, show_annotations, edited_annotations],
             outputs=[image_panel["image_display"],edited_annotations])
         
         image_panel["image_display"].annotation_move(
                     fn=update_edited_annotation,
-                    inputs=[image_index, edited_annotations],
+                    inputs=[image_index,show_annotations, edited_annotations],
                     outputs=[image_panel["image_display"],edited_annotations])
         annotation_panel["apply_button"].click(fn=save_current_annotations,
-                                               inputs=[image_index,edited_annotations],
+                                               inputs=[image_index,show_annotations,edited_annotations],
                                                outputs=[edited_annotations,image_panel["image_display"]])
         annotation_panel["delete_button"].click(
             fn=delete_annotation,
-            inputs=[image_index,selected_annotation_id, edited_annotations],
+            inputs=[image_index, show_annotations, selected_annotation_id, edited_annotations],
             outputs=[image_panel["image_display"], edited_annotations])
         
         annotation_panel["Add_annotation"].click(
@@ -798,29 +804,34 @@ def create_app():
             outputs=add_mode)
         
         add_mode.change(
-            fn=lambda mode, index, selected, edits:render_interactive_image(index,selected,edits,mode),
-            inputs=[add_mode,image_index,selected_annotation_id,edited_annotations],
+            fn=render_interactive_image,
+            inputs=[image_index,show_annotations, selected_annotation_id,edited_annotations,add_mode],
             outputs=image_panel["image_display"])
         
         image_panel["image_display"].annotation_add(
             fn=add_annotation,
-            inputs=[image_index, edited_annotations],
+            inputs=[image_index,show_annotations, edited_annotations],
             outputs=[image_panel["image_display"],edited_annotations,add_mode])
-        app.load(fn=render_interactive_image,inputs=image_index,outputs=image_panel["image_display"])
+        
+        app.load(fn=render_interactive_image,inputs=[image_index, show_annotations],outputs=image_panel["image_display"])
+
         dataset_panel["next_button"].click(
             fn=next_image,
-            inputs=[image_index, edited_annotations, dataset_panel["image_counter"]],
+            inputs=[image_index, show_annotations,edited_annotations, dataset_panel["image_counter"]],
             outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel['label_dropdown'],dataset_panel["image_counter"]]
         )
         dataset_panel["previous_button"].click(
                     fn=previous_image,
-                    inputs=[image_index, edited_annotations, dataset_panel["image_counter"]],
+                    inputs=[image_index,show_annotations, edited_annotations, dataset_panel["image_counter"]],
                     outputs=[image_panel["image_display"],image_index,selected_annotation_id,annotation_panel['label_dropdown'],dataset_panel["image_counter"]]
                 )
         annotation_panel["label_dropdown"].change(
         fn=update_annotation_label,
-        inputs=[image_index,selected_annotation_id,edited_annotations,annotation_panel["label_dropdown"]],
+        inputs=[image_index,show_annotations,selected_annotation_id,edited_annotations,annotation_panel["label_dropdown"]],
         outputs=[edited_annotations,image_panel["image_display"]])
+
+        dataset_panel["show_annotations"].change(fn=toggle, inputs=[image_index, show_annotations, selected_annotation_id, edited_annotations], 
+                                                 outputs=[image_panel["image_display"], show_annotations])
     app.launch(server_name=args.host,
                server_port=args.port,
                share=args.share)
